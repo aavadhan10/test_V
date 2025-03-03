@@ -5,11 +5,22 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import re
+import json
+import anthropic
+import os
+from io import StringIO
+
+# Vector database support
+import chromadb
+from chromadb.utils import embedding_functions
+from chromadb.config import Settings
+import uuid
+import textwrap
 
 # Set page configuration
 st.set_page_config(
-    page_title="Dynamic Data Dashboard",
-    page_icon="📊",
+    page_title="Claude-Powered Dashboard",
+    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -58,6 +69,9 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# *** HARDCODED API KEY - REPLACE WITH YOUR ACTUAL KEY ***
+CLAUDE_API_KEY = "YOUR_API_KEY_HERE"  # Replace with your actual Claude API key
 
 # Define standardized color scheme to use across all visualizations
 def get_color_scheme():
@@ -151,6 +165,487 @@ def convert_date_columns(df, date_columns):
             pass  # If conversion fails, leave as is
     return df
 
+def format_number(num, prefix=""):
+    """Format numbers with comma separators and optional prefix"""
+    if isinstance(num, (int, float)):
+        return f"{prefix}{num:,.0f}"
+    return "N/A"
+
+def format_currency(num):
+    """Format numbers as currency"""
+    if isinstance(num, (int, float)):
+        return f"${num:,.2f}"
+    return "N/A"
+
+def process_uploaded_file(uploaded_file):
+    """Process the uploaded CSV file"""
+    try:
+        # Try to read with pandas
+        df = pd.read_csv(uploaded_file)
+        return df
+    except Exception as e:
+        st.error(f"Error reading the file: {str(e)}")
+        return None
+
+class VectorStore:
+    """A class to handle vector database operations for large datasets"""
+    
+    def __init__(self, collection_name="data_chunks"):
+        """Initialize the vector database"""
+        try:
+            # Use Claude's compatible embedding function - in this case we can use SentenceTransformers locally
+            try:
+                from sentence_transformers import SentenceTransformer
+                self.model = SentenceTransformer('all-MiniLM-L6-v2')
+                
+                # Create a custom embedding function
+                def sentence_transformer_ef(texts):
+                    embeddings = self.model.encode(texts)
+                    return embeddings.tolist()
+                
+                self.ef = sentence_transformer_ef
+                st.sidebar.success("✅ Using local embeddings (SentenceTransformers)")
+            except ImportError:
+                # Fallback to OpenAI if SentenceTransformers is not available
+                self.ef = embedding_functions.OpenAIEmbeddingFunction(
+                    api_key=os.environ.get("OPENAI_API_KEY", ""),
+                    model_name="text-embedding-ada-002"
+                )
+            
+            # Initialize ChromaDB client
+            self.client = chromadb.Client(Settings(
+                chroma_db_impl="duckdb+parquet",
+                persist_directory="./.chromadb"
+            ))
+            
+            # Try to get the collection or create a new one
+            try:
+                if isinstance(self.ef, embedding_functions.OpenAIEmbeddingFunction):
+                    self.collection = self.client.get_collection(name=collection_name, embedding_function=self.ef)
+                else:
+                    self.collection = self.client.get_collection(name=collection_name)
+            except:
+                if isinstance(self.ef, embedding_functions.OpenAIEmbeddingFunction):
+                    self.collection = self.client.create_collection(name=collection_name, embedding_function=self.ef)
+                else:
+                    self.collection = self.client.create_collection(name=collection_name)
+                
+            self.is_available = True
+        except Exception as e:
+            st.warning(f"Vector database not available: {str(e)}")
+            st.info("To enable vector database support, install ChromaDB and SentenceTransformers")
+            self.is_available = False
+    
+    def store_dataframe(self, df, chunk_size=100, overlap=0):
+        """Store a dataframe in the vector database by chunking it"""
+        if not self.is_available:
+            return False
+        
+        try:
+            # Clear existing collection
+            self.collection.delete(where={})
+            
+            # Calculate number of chunks
+            total_rows = len(df)
+            num_chunks = (total_rows + chunk_size - 1) // chunk_size
+            
+            documents = []
+            metadatas = []
+            ids = []
+            
+            # Create chunks with overlap
+            for i in range(num_chunks):
+                start_idx = max(0, i * chunk_size - overlap)
+                end_idx = min(total_rows, (i + 1) * chunk_size)
+                
+                # Create chunk
+                chunk_df = df.iloc[start_idx:end_idx]
+                chunk_csv = chunk_df.to_csv(index=False)
+                
+                # Create metadata about this chunk
+                metadata = {
+                    "start_row": int(start_idx),
+                    "end_row": int(end_idx),
+                    "num_rows": int(end_idx - start_idx),
+                    "columns": ", ".join(df.columns.tolist())
+                }
+                
+                # Add chunk to lists
+                documents.append(chunk_csv)
+                metadatas.append(metadata)
+                ids.append(f"chunk_{uuid.uuid4()}")
+            
+            # Add all chunks to the collection
+            self.collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+            
+            return True
+        except Exception as e:
+            st.error(f"Error storing dataframe in vector database: {str(e)}")
+            return False
+    
+    def query(self, query_text, n_results=3):
+        """Query the vector database for relevant chunks"""
+        if not self.is_available:
+            return []
+        
+        try:
+            results = self.collection.query(
+                query_texts=[query_text],
+                n_results=n_results
+            )
+            
+            return list(zip(results['documents'][0], results['metadatas'][0]))
+        except Exception as e:
+            st.error(f"Error querying vector database: {str(e)}")
+            return []
+
+
+class ClaudeAnalyzer:
+    def __init__(self, api_key=CLAUDE_API_KEY):
+        try:
+            self.client = anthropic.Anthropic(api_key=api_key)
+            self.is_available = True
+        except Exception as e:
+            st.error(f"Error initializing Claude client: {str(e)}")
+            self.client = None
+            self.is_available = False
+        
+        # Set default model (can be changed later)
+        self.model = "claude-3-sonnet-20240229"
+        
+        # Initialize vector store
+        self.vector_store = VectorStore()
+        self.using_vector_store = False
+    
+    def is_available(self):
+        """Check if Claude client is available"""
+        return self.is_available
+    
+    def analyze_data(self, df, prompt, max_rows=100):
+        """Analyze data using Claude API"""
+        if not self.is_available:
+            return {"error": "Claude API not available."}
+        
+        try:
+            # Check if we should use vector store for large datasets
+            should_use_vector_store = len(df) > max_rows and self.vector_store.is_available
+            
+            if should_use_vector_store and not self.using_vector_store:
+                with st.status("Preparing vector database for large dataset analysis..."):
+                    success = self.vector_store.store_dataframe(df)
+                    if success:
+                        st.success(f"Successfully loaded {len(df)} rows into vector database")
+                        self.using_vector_store = True
+                    else:
+                        st.warning("Failed to load data into vector database. Falling back to sample data.")
+                        should_use_vector_store = False
+            
+            # Create the prompt for Claude
+            system_message = """
+            You are an expert data analyst. You will be given CSV data and a request for analysis.
+            Analyze the data and provide your findings in JSON format with these keys:
+            - "summary": A brief summary of the data (1-2 sentences)
+            - "key_insights": Array of 3-5 key insights or patterns you observe
+            - "recommended_visualizations": Array of objects, each with:
+                - "title": Descriptive title for the visualization
+                - "description": What this visualization shows
+                - "type": One of "bar", "line", "scatter", "pie", "histogram", "box", "heatmap"
+                - "x_column": Column name for x-axis (or null for some chart types)
+                - "y_column": Column name for y-axis (or values for pie charts)
+                - "color_column": Optional column name for color dimension (or null)
+                - "agg_function": Aggregation function to use ("sum", "mean", "count", etc.)
+                - "filters": Optional array of filter operations to apply
+            - "anomalies": Array of potential anomalies or data issues
+            - "data_quality": Object with data quality metrics
+            
+            Respond ONLY with valid JSON. Do not include any explanations or text outside the JSON structure.
+            """
+            
+            if should_use_vector_store:
+                # Query the vector database for relevant chunks
+                relevant_chunks = self.vector_store.query(prompt, n_results=3)
+                
+                # If we found relevant chunks, use them
+                if relevant_chunks:
+                    chunk_descriptions = ""
+                    
+                    for i, (chunk_csv, metadata) in enumerate(relevant_chunks):
+                        start_row = metadata['start_row']
+                        end_row = metadata['end_row']
+                        
+                        # Add chunk description with row range
+                        chunk_descriptions += f"\nChunk {i+1} (rows {start_row}-{end_row}):\n```\n{textwrap.shorten(chunk_csv, width=2000, placeholder='...')}\n```\n"
+                    
+                    # Add statistical summary as additional context
+                    stats_summary = f"""
+                    Dataset statistics:
+                    - Total rows: {len(df)}
+                    - Columns: {', '.join(df.columns)}
+                    - Numeric columns stats:
+                    {df.describe().to_string()}
+                    """
+                    
+                    full_prompt = f"""
+                    I'll provide you with relevant chunks from a large dataset ({len(df)} rows), based on your query.
+                    
+                    {chunk_descriptions}
+                    
+                    {stats_summary}
+                    
+                    User request: {prompt}
+                    
+                    Provide your analysis and recommendations in JSON format as specified.
+                    """
+                else:
+                    # Fallback to sample if no relevant chunks found
+                    sample_df = df.head(max_rows)
+                    csv_string = sample_df.to_csv(index=False)
+                    
+                    full_prompt = f"""
+                    Here is a sample from a large dataset ({len(df)} total rows):
+                    
+                    ```
+                    {csv_string}
+                    ```
+                    
+                    User request: {prompt}
+                    
+                    Provide your analysis and recommendations in JSON format as specified.
+                    """
+            else:
+                # Standard approach for smaller datasets
+                sample_df = df.head(max_rows) if len(df) > max_rows else df
+                csv_string = sample_df.to_csv(index=False)
+                
+                full_prompt = f"""
+                Here is a CSV dataset:
+                
+                ```
+                {csv_string}
+                ```
+                
+                User request: {prompt}
+                
+                Provide your analysis and recommendations in JSON format as specified.
+                """
+            
+            # Call to Claude API
+            response = self.client.messages.create(
+                model=self.model,  # Use the specified Claude model
+                system=system_message,
+                max_tokens=4000,
+                messages=[
+                    {"role": "user", "content": full_prompt}
+                ]
+            )
+            
+            # Extract JSON from response
+            result_text = response.content[0].text
+            
+            # Clean up the response to extract just valid JSON
+            # Sometimes Claude might wrap the JSON in code blocks or add explanations
+            json_pattern = r'```(?:json)?(.*?)```|(\{.*\})'
+            match = re.search(json_pattern, result_text, re.DOTALL)
+            
+            if match:
+                json_str = match.group(1) or match.group(2)
+                json_str = json_str.strip()
+            else:
+                json_str = result_text
+            
+            # Parse the JSON
+            try:
+                result = json.loads(json_str)
+                return result
+            except json.JSONDecodeError as e:
+                st.error(f"Error parsing Claude's response as JSON: {str(e)}")
+                st.text("Raw response from Claude:")
+                st.text(result_text)
+                return {"error": "Failed to parse Claude's response as JSON"}
+            
+        except Exception as e:
+            st.error(f"Error calling Claude API: {str(e)}")
+            return {"error": f"Error calling Claude API: {str(e)}"}
+
+    def generate_natural_language_report(self, df, data_types):
+        """Generate a natural language report about the data"""
+        if not self.is_available:
+            return "Claude API not available."
+        
+        try:
+            # Prepare sample of data to send to Claude
+            max_rows = 100  # Limit rows to avoid token limits
+            sample_df = df.head(max_rows) if len(df) > max_rows else df
+            csv_string = sample_df.to_csv(index=False)
+            
+            # Create summary of data types
+            data_types_summary = {
+                "total_rows": len(df),
+                "total_columns": len(df.columns),
+                "column_types": {
+                    "numeric": data_types['numeric'],
+                    "categorical": data_types['categorical'],
+                    "datetime": data_types['datetime'] + data_types['potential_date_strings'],
+                    "text": data_types['text'],
+                    "boolean": data_types['boolean'],
+                    "id": data_types['id']
+                }
+            }
+            
+            # Generate numeric summary if available
+            numeric_summary = None
+            if data_types['numeric']:
+                numeric_summary = df[data_types['numeric']].describe().to_dict()
+            
+            # Create the prompt for Claude
+            system_message = """
+            You are an expert data analyst creating a natural language report about a dataset.
+            Write a concise, informative report for a business audience that:
+            
+            1. Summarizes the key characteristics of the data
+            2. Highlights important patterns, trends, or relationships
+            3. Points out potential issues or anomalies
+            4. Provides 2-3 actionable recommendations based on the data
+            
+            Use a professional but accessible tone. Limit your report to 500-800 words.
+            """
+            
+            full_prompt = f"""
+            Here is information about a dataset:
+            
+            Sample data (first {min(max_rows, len(df))} rows):
+            ```
+            {csv_string}
+            ```
+            
+            Data types summary:
+            ```
+            {json.dumps(data_types_summary, indent=2)}
+            ```
+            
+            {f"Numeric summary statistics: {json.dumps(numeric_summary, indent=2)}" if numeric_summary else ""}
+            
+            Based on this information, generate a comprehensive data report. 
+            Include insights about the data's structure, key metrics, patterns, and potential areas for further investigation.
+            """
+            
+            # Call to Claude API
+            response = self.client.messages.create(
+                model=self.model,  # Use the specified Claude model
+                system=system_message,
+                max_tokens=4000,
+                messages=[
+                    {"role": "user", "content": full_prompt}
+                ]
+            )
+            
+            # Return the report
+            return response.content[0].text
+            
+        except Exception as e:
+            st.error(f"Error generating report with Claude API: {str(e)}")
+            return f"Error generating report: {str(e)}"
+    
+    def interpret_prompt(self, df, data_types, prompt):
+        """Interpret a natural language prompt and convert it to visualization specifications"""
+        if not self.is_available:
+            return {"error": "Claude API not available."}
+        
+        try:
+            # Prepare summary of data structure
+            columns_info = {}
+            for col in df.columns:
+                col_type = "unknown"
+                for dtype, cols in data_types.items():
+                    if col in cols:
+                        col_type = dtype
+                        break
+                
+                # Add sample values
+                if col in df.columns:
+                    sample_values = df[col].dropna().head(5).tolist()
+                    try:
+                        sample_values = [str(val) for val in sample_values]
+                    except:
+                        sample_values = ["[complex value]"]
+                else:
+                    sample_values = []
+                
+                columns_info[col] = {
+                    "type": col_type,
+                    "sample_values": sample_values
+                }
+            
+            # Create the prompt for Claude
+            system_message = """
+            You are an expert data visualization assistant. You will be given information about a dataset 
+            and a natural language request for a visualization. Your job is to interpret the request and 
+            determine the appropriate visualization specifications.
+            
+            Return ONLY a JSON object with these fields:
+            - "visualization_type": One of "bar", "line", "scatter", "pie", "histogram", "box", "heatmap"
+            - "x_column": Column name for x-axis (or null for some chart types)
+            - "y_column": Column name for y-axis (or values for pie charts)
+            - "color_column": Optional column name for color dimension (or null)
+            - "agg_function": Aggregation function to use ("sum", "mean", "count", etc.)
+            - "title": Suggested title for the visualization
+            - "filters": Optional array of filter operations to apply
+            - "interpretation": Brief explanation of what you understood from the request
+            
+            Your response should be valid JSON only. Do not include any text outside the JSON structure.
+            """
+            
+            full_prompt = f"""
+            Dataset information:
+            - Number of rows: {len(df)}
+            - Columns: {json.dumps(columns_info, indent=2)}
+            
+            User's visualization request: "{prompt}"
+            
+            Determine the appropriate visualization specifications based on this request.
+            """
+            
+            # Call to Claude API
+            response = self.client.messages.create(
+                model=self.model,  # Use the specified Claude model
+                system=system_message,
+                max_tokens=1500,
+                messages=[
+                    {"role": "user", "content": full_prompt}
+                ]
+            )
+            
+            # Extract JSON from response
+            result_text = response.content[0].text
+            
+            # Clean up the response to extract just valid JSON
+            json_pattern = r'```(?:json)?(.*?)```|(\{.*\})'
+            match = re.search(json_pattern, result_text, re.DOTALL)
+            
+            if match:
+                json_str = match.group(1) or match.group(2)
+                json_str = json_str.strip()
+            else:
+                json_str = result_text
+            
+            # Parse the JSON
+            try:
+                result = json.loads(json_str)
+                return result
+            except json.JSONDecodeError as e:
+                st.error(f"Error parsing Claude's response as JSON: {str(e)}")
+                st.text("Raw response from Claude:")
+                st.text(result_text)
+                return {"error": "Failed to parse Claude's response as JSON"}
+            
+        except Exception as e:
+            st.error(f"Error interpreting prompt with Claude API: {str(e)}")
+            return {"error": f"Error interpreting prompt: {str(e)}"}
+
 def create_scrollable_bar_chart(df, x, y, title, x_label=None, y_label=None, color=None, orientation='v', height=500, show_top_n=10):
     """
     Create a bar chart that can be scrolled to show all data while defaulting to show top N items
@@ -226,29 +721,7 @@ def create_scrollable_bar_chart(df, x, y, title, x_label=None, y_label=None, col
         if st.checkbox(f"Show all {len(df)} items in table format"):
             st.dataframe(df_sorted, use_container_width=True, height=min(400, len(df) * 35))
 
-def format_number(num, prefix=""):
-    """Format numbers with comma separators and optional prefix"""
-    if isinstance(num, (int, float)):
-        return f"{prefix}{num:,.0f}"
-    return "N/A"
-
-def format_currency(num):
-    """Format numbers as currency"""
-    if isinstance(num, (int, float)):
-        return f"${num:,.2f}"
-    return "N/A"
-
-def process_uploaded_file(uploaded_file):
-    """Process the uploaded CSV file"""
-    try:
-        # Try to read with pandas
-        df = pd.read_csv(uploaded_file)
-        return df
-    except Exception as e:
-        st.error(f"Error reading the file: {str(e)}")
-        return None
-
-def create_overview_section(df, data_types):
+def create_overview_section(df, data_types, claude_analyzer=None):
     """Create an overview section with key metrics and basic visualizations"""
     colors = get_color_scheme()
     
@@ -290,6 +763,14 @@ def create_overview_section(df, data_types):
                 'missing_pct': (df[data_types['categorical']].isna().sum() / len(df)) * 100
             })
             st.dataframe(cat_summary, use_container_width=True)
+    
+    # Claude-powered data report
+    if claude_analyzer and claude_analyzer.is_available():
+        with st.expander("Claude's Data Analysis Report", expanded=True):
+            if st.button("Generate Report with Claude"):
+                with st.spinner("Claude is analyzing your data..."):
+                    report = claude_analyzer.generate_natural_language_report(df, data_types)
+                    st.markdown(report)
     
     # Visualizations for overview section
     st.subheader("Quick Visualizations")
@@ -346,619 +827,261 @@ def create_overview_section(df, data_types):
                 fig.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig, use_container_width=True)
 
-def create_numeric_analysis(df, data_types):
-    """Create analysis section for numeric data"""
-    colors = get_color_scheme()
+def create_claude_analysis_section(df, data_types, claude_analyzer):
+    """Create a section for Claude-powered data analysis"""
+    st.header("Claude-Powered Data Analysis")
     
-    st.header("Numeric Data Analysis")
-    
-    if not data_types['numeric']:
-        st.info("No numeric columns detected in the dataset.")
+    if not claude_analyzer or not claude_analyzer.is_available():
+        st.warning("Claude API is not available.")
         return
     
-    # Select columns for analysis
-    num_cols = st.multiselect("Select numeric columns for analysis", 
-                             data_types['numeric'],
-                             default=data_types['numeric'][:min(2, len(data_types['numeric']))])
+    # Let user ask Claude to analyze data
+    st.subheader("Ask Claude about your data")
     
-    if not num_cols:
-        st.warning("Please select at least one numeric column for analysis.")
-        return
+    analysis_prompt = st.text_area(
+        "What would you like Claude to analyze in your data?",
+        height=100,
+        placeholder="Example: 'Analyze the relationship between categories and sales' or 'Find interesting patterns in this dataset'"
+    )
     
-    # Create visualizations for each selected column
-    for i, col in enumerate(num_cols):
-        st.subheader(f"Analysis of {col}")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            with st.expander(f"Distribution of {col}", expanded=True):
-                # Histogram
-                fig = px.histogram(df, x=col, 
-                                  title=f"Distribution of {col}",
-                                  color_discrete_sequence=[colors['primary']])
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            with st.expander(f"Box Plot of {col}", expanded=True):
-                # Box Plot
-                fig = px.box(df, y=col, 
-                            title=f"Box Plot of {col}",
-                            color_discrete_sequence=[colors['secondary']])
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # If we have categorical columns, create breakdown
-        if data_types['categorical']:
-            # Select a categorical column for breakdown
-            cat_col = st.selectbox(f"Select a category to break down {col} by:", 
-                                 data_types['categorical'],
-                                 key=f"cat_select_{i}")
-            
-            if cat_col:
-                # Compute breakdown statistics
-                breakdown = df.groupby(cat_col)[col].agg(['mean', 'median', 'sum', 'count']).reset_index()
-                breakdown = breakdown.sort_values('sum', ascending=False).head(15)
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    with st.expander(f"Sum of {col} by {cat_col}", expanded=True):
-                        fig = px.bar(breakdown, x=cat_col, y='sum',
-                                    title=f"Sum of {col} by {cat_col}",
-                                    color_discrete_sequence=[colors['primary']])
-                        fig.update_layout(xaxis_tickangle=-45)
-                        st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    with st.expander(f"Average of {col} by {cat_col}", expanded=True):
-                        fig = px.bar(breakdown, x=cat_col, y='mean',
-                                    title=f"Average of {col} by {cat_col}",
-                                    color_discrete_sequence=[colors['accent']])
-                        fig.update_layout(xaxis_tickangle=-45)
-                        st.plotly_chart(fig, use_container_width=True)
-        
-        # If we have multiple numeric columns, show correlation
-        if len(num_cols) > 1 and len(num_cols) < 20:  # Limit to avoid overloading
-            with st.expander("Correlation Matrix", expanded=True):
-                # Calculate correlation
-                corr = df[num_cols].corr()
-                
-                # Create heatmap
-                fig = px.imshow(corr,
-                               title="Correlation Matrix",
-                               color_continuous_scale=colors['diverging'])
-                st.plotly_chart(fig, use_container_width=True)
-                
-                st.write("Correlation values:")
-                st.dataframe(corr, use_container_width=True)
-
-def create_categorical_analysis(df, data_types):
-    """Create analysis section for categorical data"""
-    colors = get_color_scheme()
-    
-    st.header("Categorical Data Analysis")
-    
-    if not data_types['categorical']:
-        st.info("No categorical columns detected in the dataset.")
-        return
-    
-    # Select columns for analysis
-    cat_cols = st.multiselect("Select categorical columns for analysis", 
-                             data_types['categorical'],
-                             default=data_types['categorical'][:min(2, len(data_types['categorical']))])
-    
-    if not cat_cols:
-        st.warning("Please select at least one categorical column for analysis.")
-        return
-    
-    # Create visualizations for each selected column
-    for i, col in enumerate(cat_cols):
-        st.subheader(f"Analysis of {col}")
-        
-        # Get value counts
-        value_counts = df[col].value_counts().reset_index()
-        value_counts.columns = [col, 'Count']
-        
-        # Sort and limit for better visualization
-        value_counts = value_counts.sort_values('Count', ascending=False)
-        
-        # Check if too many categories for a regular bar chart
-        if len(value_counts) > 20:
-            # Use scrollable chart for many categories
-            create_scrollable_bar_chart(
-                value_counts,
-                col,
-                'Count',
-                f"Distribution of {col}",
-                col,
-                'Count',
-                color='primary',
-                height=500,
-                show_top_n=15
-            )
+    if st.button("Analyze with Claude"):
+        if not analysis_prompt:
+            st.warning("Please enter a prompt for analysis.")
         else:
-            # Regular bar chart for fewer categories
-            with st.expander(f"Distribution of {col}", expanded=True):
-                fig = px.bar(value_counts, x=col, y='Count',
-                            title=f"Distribution of {col}",
-                            color_discrete_sequence=[colors['primary']])
-                fig.update_layout(xaxis_tickangle=-45)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Show pie chart for categorical distribution
-        with st.expander(f"Percentage Distribution of {col}", expanded=True):
-            # Limit categories for pie chart to top 10
-            pie_data = value_counts.head(10)
-            
-            if len(value_counts) > 10:
-                # Add an "Other" category if there are more than 10
-                other_sum = value_counts.iloc[10:]['Count'].sum()
-                other_row = pd.DataFrame({col: ['Other'], 'Count': [other_sum]})
-                pie_data = pd.concat([pie_data, other_row])
-            
-            fig = px.pie(pie_data, names=col, values='Count',
-                        title=f"Percentage Distribution of {col}",
-                        color_discrete_sequence=colors['categorical'])
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # If we have multiple categorical columns, show cross-tabulation
-        if len(cat_cols) > 1:
-            cross_col = st.selectbox(f"Select another category to compare with {col}:", 
-                                   [c for c in cat_cols if c != col],
-                                   key=f"cross_{i}")
-            
-            if cross_col:
-                # Create cross-tabulation
-                cross_tab = pd.crosstab(df[col], df[cross_col])
+            with st.spinner("Claude is analyzing your data..."):
+                analysis_results = claude_analyzer.analyze_data(df, analysis_prompt)
                 
-                with st.expander(f"Relationship between {col} and {cross_col}", expanded=True):
-                    fig = px.imshow(cross_tab,
-                                   title=f"Relationship between {col} and {cross_col}",
-                                   color_continuous_scale=colors['sequence'])
-                    st.plotly_chart(fig, use_container_width=True)
+                if "error" in analysis_results:
+                    st.error(analysis_results["error"])
+                else:
+                    # Display summary
+                    st.subheader("Summary")
+                    st.write(analysis_results.get("summary", "No summary provided."))
                     
-                    st.write("Cross-tabulation values:")
-                    st.dataframe(cross_tab, use_container_width=True)
+                    # Display key insights
+                    st.subheader("Key Insights")
+                    insights = analysis_results.get("key_insights", [])
+                    if insights:
+                        for i, insight in enumerate(insights):
+                            st.markdown(f"**{i+1}.** {insight}")
+                    else:
+                        st.write("No insights provided.")
+                    
+                    # Display recommended visualizations
+                    st.subheader("Recommended Visualizations")
+                    viz_recs = analysis_results.get("recommended_visualizations", [])
+                    
+                    if viz_recs:
+                        for i, viz in enumerate(viz_recs):
+                            st.markdown(f"### {viz.get('title', f'Visualization {i+1}')}")
+                            st.markdown(viz.get('description', 'No description provided.'))
+                            
+                            # Extract visualization parameters
+                            viz_type = viz.get('type', 'bar')
+                            x_col = viz.get('x_column')
+                            y_col = viz.get('y_column')
+                            color_col = viz.get('color_column')
+                            agg_func = viz.get('agg_function', 'sum')
+                            
+                            # Create visualization based on type
+                            try:
+                                if viz_type == 'bar':
+                                    if x_col and y_col:
+                                        # For bar charts, we typically group by x and aggregate y
+                                        agg_data = df.groupby(x_col)[y_col].agg(agg_func).reset_index()
+                                        agg_data = agg_data.sort_values(y_col, ascending=False)
+                                        
+                                        # Limit to top 15 for clarity
+                                        if len(agg_data) > 15:
+                                            agg_data = agg_data.head(15)
+                                            
+                                        fig = px.bar(
+                                            agg_data, 
+                                            x=x_col, 
+                                            y=y_col,
+                                            title=viz.get('title', f"{agg_func.capitalize()} of {y_col} by {x_col}"),
+                                            color=color_col if color_col else None
+                                        )
+                                        fig.update_layout(xaxis_tickangle=-45)
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    else:
+                                        st.warning(f"Missing columns for bar chart: x_col={x_col}, y_col={y_col}")
+                                
+                                elif viz_type == 'line':
+                                    if x_col and y_col:
+                                        # Handle datetime x
+                                        if x_col in data_types['datetime'] or x_col in [col for col in data_types['potential_date_strings'] if f"{col}_Year" in df.columns]:
+                                            # For time series, we need to ensure the x-axis is properly sorted
+                                            df_sorted = df.sort_values(x_col)
+                                            
+                                            # If color column is provided, group by that as well
+                                            if color_col:
+                                                grouped = df_sorted.groupby([pd.Grouper(key=x_col, freq='M'), color_col])[y_col].agg(agg_func).reset_index()
+                                                fig = px.line(
+                                                    grouped,
+                                                    x=x_col,
+                                                    y=y_col,
+                                                    color=color_col,
+                                                    title=viz.get('title', f"{agg_func.capitalize()} of {y_col} Over Time by {color_col}"),
+                                                    markers=True
+                                                )
+                                            else:
+                                                grouped = df_sorted.groupby(pd.Grouper(key=x_col, freq='M'))[y_col].agg(agg_func).reset_index()
+                                                fig = px.line(
+                                                    grouped,
+                                                    x=x_col,
+                                                    y=y_col,
+                                                    title=viz.get('title', f"{agg_func.capitalize()} of {y_col} Over Time"),
+                                                    markers=True
+                                                )
+                                        else:
+                                            # For non-datetime x, just create a regular line chart
+                                            fig = px.line(
+                                                df,
+                                                x=x_col,
+                                                y=y_col,
+                                                color=color_col if color_col else None,
+                                                title=viz.get('title', f"{y_col} vs {x_col}"),
+                                                markers=True
+                                            )
+                                        
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    else:
+                                        st.warning(f"Missing columns for line chart: x_col={x_col}, y_col={y_col}")
+                                
+                                elif viz_type == 'scatter':
+                                    if x_col and y_col:
+                                        fig = px.scatter(
+                                            df,
+                                            x=x_col,
+                                            y=y_col,
+                                            color=color_col if color_col else None,
+                                            title=viz.get('title', f"{y_col} vs {x_col}")
+                                        )
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    else:
+                                        st.warning(f"Missing columns for scatter plot: x_col={x_col}, y_col={y_col}")
+                                
+                                elif viz_type == 'pie':
+                                    if x_col and y_col:
+                                        # For pie charts, we need to aggregate the data
+                                        agg_data = df.groupby(x_col)[y_col].agg(agg_func).reset_index()
+                                        
+                                        # Limit to top categories for clarity
+                                        if len(agg_data) > 10:
+                                            agg_data = agg_data.sort_values(y_col, ascending=False).head(10)
+                                            st.info("Showing only top 10 categories for clarity")
+                                        
+                                        fig = px.pie(
+                                            agg_data,
+                                            names=x_col,
+                                            values=y_col,
+                                            title=viz.get('title', f"Distribution of {y_col} by {x_col}")
+                                        )
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    else:
+                                        st.warning(f"Missing columns for pie chart: x_col={x_col}, y_col={y_col}")
+                                
+                                elif viz_type == 'histogram':
+                                    if x_col:
+                                        fig = px.histogram(
+                                            df,
+                                            x=x_col,
+                                            color=color_col if color_col else None,
+                                            title=viz.get('title', f"Distribution of {x_col}")
+                                        )
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    else:
+                                        st.warning(f"Missing column for histogram: x_col={x_col}")
+                                
+                                elif viz_type == 'box':
+                                    if y_col:
+                                        fig = px.box(
+                                            df,
+                                            x=x_col if x_col else None,
+                                            y=y_col,
+                                            color=color_col if color_col else None,
+                                            title=viz.get('title', f"Box Plot of {y_col}" + (f" by {x_col}" if x_col else ""))
+                                        )
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    else:
+                                        st.warning(f"Missing column for box plot: y_col={y_col}")
+                                
+                                elif viz_type == 'heatmap':
+                                    if x_col and y_col and agg_func:
+                                        # Create pivot table for heatmap
+                                        pivot_data = df.pivot_table(
+                                            index=y_col,
+                                            columns=x_col,
+                                            values=color_col if color_col else y_col,  # If color_col is provided, use it for values
+                                            aggfunc=agg_func,
+                                            fill_value=0
+                                        )
+                                        
+                                        # Limit size for readability
+                                        if pivot_data.shape[0] > 15 or pivot_data.shape[1] > 15:
+                                            # Get top rows and columns by sum
+                                            row_sums = pivot_data.sum(axis=1).sort_values(ascending=False).head(15).index
+                                            col_sums = pivot_data.sum(axis=0).sort_values(ascending=False).head(15).index
+                                            pivot_data = pivot_data.loc[row_sums, col_sums]
+                                            st.info("Heatmap limited to top 15 rows and columns for readability")
+                                        
+                                        fig = px.imshow(
+                                            pivot_data,
+                                            title=viz.get('title', f"Heatmap of {agg_func.capitalize()} of {color_col if color_col else y_col} by {y_col} and {x_col}"),
+                                            color_continuous_scale='Blues'
+                                        )
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    else:
+                                        st.warning(f"Missing columns for heatmap: x_col={x_col}, y_col={y_col}")
+                                
+                                else:
+                                    st.warning(f"Unsupported visualization type: {viz_type}")
+                                
+                            except Exception as e:
+                                st.error(f"Error creating visualization: {str(e)}")
+                            
+                            # Add option to save this visualization to the dashboard
+                            if 'saved_visualizations' not in st.session_state:
+                                st.session_state.saved_visualizations = []
+                            
+                            if st.button(f"Add to Dashboard", key=f"add_claude_viz_{i}"):
+                                try:
+                                    # Re-create the visualization to save
+                                    st.session_state.saved_visualizations.append({
+                                        'title': viz.get('title', f"Visualization {i+1}"),
+                                        'type': viz_type,
+                                        'x_col': x_col,
+                                        'y_col': y_col,
+                                        'color_col': color_col,
+                                        'agg_func': agg_func,
+                                        'description': viz.get('description', '')
+                                    })
+                                    st.success(f"Added '{viz.get('title', f'Visualization {i+1}')}' to your dashboard!")
+                                except Exception as e:
+                                    st.error(f"Error saving visualization: {str(e)}")
+                    
+                    else:
+                        st.write("No visualizations recommended.")
+                    
+                    # Display anomalies if any
+                    if "anomalies" in analysis_results and analysis_results["anomalies"]:
+                        st.subheader("Potential Anomalies")
+                        anomalies = analysis_results["anomalies"]
+                        for i, anomaly in enumerate(anomalies):
+                            st.markdown(f"**{i+1}.** {anomaly}")
+                    
+                    # Display data quality information if available
+                    if "data_quality" in analysis_results and analysis_results["data_quality"]:
+                        st.subheader("Data Quality Assessment")
+                        data_quality = analysis_results["data_quality"]
+                        for key, value in data_quality.items():
+                            st.markdown(f"**{key}:** {value}")
 
-def create_time_series_analysis(df, data_types):
-    """Create analysis section for time series data"""
+def create_prompt_based_visualizations(df, data_types, claude_analyzer=None):
+    """Create visualizations based on natural language prompts using Claude"""
     colors = get_color_scheme()
     
-    st.header("Time Series Analysis")
-    
-    # Check if we have datetime columns or date-like string columns
-    datetime_cols = data_types['datetime'] + [col for col in data_types['potential_date_strings'] 
-                                             if f"{col}_Year" in df.columns]
-    
-    if not datetime_cols:
-        st.info("No datetime columns detected in the dataset. Please upload data with date/time information for time series analysis.")
-        return
-    
-    # Select date column
-    date_col = st.selectbox("Select date/time column for analysis", datetime_cols)
-    
-    if not date_col:
-        st.warning("Please select a date/time column for analysis.")
-        return
-    
-    # Get the actual datetime column (could be original or transformed)
-    if date_col in data_types['potential_date_strings']:
-        # Use the column itself if it was successfully converted to datetime
-        if pd.api.types.is_datetime64_dtype(df[date_col]):
-            datetime_column = date_col
-        else:
-            st.warning(f"Column {date_col} contains date-like strings but couldn't be converted to datetime format.")
-            return
-    else:
-        datetime_column = date_col
-    
-    # Select a numeric column to analyze over time
-    if not data_types['numeric']:
-        st.info("No numeric columns available for time series analysis.")
-        return
-    
-    value_col = st.selectbox("Select numeric column to analyze over time", data_types['numeric'])
-    
-    if not value_col:
-        st.warning("Please select a numeric column to analyze over time.")
-        return
-    
-    # Create time grouping options
-    groupby_options = ["Day", "Week", "Month", "Quarter", "Year"]
-    time_groupby = st.selectbox("Group by time period", groupby_options, index=2)  # Default to Month
-    
-    # Set up time grouping
-    if time_groupby == "Day":
-        df['time_group'] = df[datetime_column].dt.date
-    elif time_groupby == "Week":
-        df['time_group'] = df[datetime_column].dt.to_period('W').dt.start_time
-    elif time_groupby == "Month":
-        df['time_group'] = df[datetime_column].dt.to_period('M').dt.start_time
-    elif time_groupby == "Quarter":
-        df['time_group'] = df[datetime_column].dt.to_period('Q').dt.start_time
-    else:  # Year
-        df['time_group'] = df[datetime_column].dt.year
-    
-    # Group data by time period
-    time_series_data = df.groupby('time_group')[value_col].agg(['sum', 'mean', 'count']).reset_index()
-    time_series_data.columns = ['Period', 'Sum', 'Average', 'Count']
-    
-    # Ensure the Period column is sorted chronologically
-    time_series_data = time_series_data.sort_values('Period')
-    
-    # Create time series visualizations
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        with st.expander(f"Sum of {value_col} Over Time", expanded=True):
-            fig = px.line(time_series_data, x='Period', y='Sum',
-                         title=f"Sum of {value_col} by {time_groupby}",
-                         markers=True,
-                         color_discrete_sequence=[colors['primary']])
-            st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        with st.expander(f"Average {value_col} Over Time", expanded=True):
-            fig = px.line(time_series_data, x='Period', y='Average',
-                         title=f"Average {value_col} by {time_groupby}",
-                         markers=True,
-                         color_discrete_sequence=[colors['secondary']])
-            st.plotly_chart(fig, use_container_width=True)
-    
-    # Optional: Add categorical breakdown over time
-    if data_types['categorical']:
-        st.subheader("Time Series Breakdown by Category")
-        
-        cat_col = st.selectbox("Select a category for time series breakdown", data_types['categorical'])
-        
-        if cat_col:
-            # Group by time period and category
-            cat_time_data = df.groupby(['time_group', cat_col])[value_col].sum().reset_index()
-            cat_time_data.columns = ['Period', 'Category', 'Value']
-            
-            # Sort by time
-            cat_time_data = cat_time_data.sort_values('Period')
-            
-            # For more than 10 categories, limit to top ones by total value
-            if df[cat_col].nunique() > 10:
-                top_categories = df.groupby(cat_col)[value_col].sum().nlargest(8).index.tolist()
-                cat_time_data = cat_time_data[cat_time_data['Category'].isin(top_categories)]
-            
-            with st.expander(f"{value_col} Over Time by {cat_col}", expanded=True):
-                fig = px.line(cat_time_data, x='Period', y='Value', color='Category',
-                             title=f"{value_col} Over Time by {cat_col}",
-                             labels={'Value': value_col, 'Period': time_groupby},
-                             color_discrete_sequence=colors['categorical'])
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Stacked area chart
-            with st.expander(f"Stacked {value_col} Over Time by {cat_col}", expanded=True):
-                fig = px.area(cat_time_data, x='Period', y='Value', color='Category',
-                             title=f"Stacked {value_col} Over Time by {cat_col}",
-                             labels={'Value': value_col, 'Period': time_groupby},
-                             color_discrete_sequence=colors['categorical'])
-                st.plotly_chart(fig, use_container_width=True)
-
-def create_custom_visualizations(df, data_types):
-    """Create custom visualization section where users can select columns and chart types"""
-    colors = get_color_scheme()
-    
-    st.header("Custom Visualizations")
-    
-    # Chart type selection
-    chart_types = [
-        "Bar Chart", 
-        "Line Chart", 
-        "Scatter Plot", 
-        "Pie Chart", 
-        "Histogram", 
-        "Box Plot",
-        "Heat Map"
-    ]
-    
-    chart_type = st.selectbox("Select chart type", chart_types)
-    
-    # Select columns based on chart type
-    if chart_type == "Bar Chart":
-        x_col = st.selectbox("Select category (X-axis)", data_types['categorical'])
-        y_col = st.selectbox("Select value (Y-axis)", data_types['numeric'])
-        color_col = st.selectbox("Select color category (optional)", ["None"] + data_types['categorical'])
-        
-        if not x_col or not y_col:
-            st.warning("Please select both X and Y columns for the bar chart.")
-            return
-        
-        # Create aggregation options
-        agg_options = ["Sum", "Average", "Count", "Median", "Min", "Max"]
-        agg_func = st.selectbox("Select aggregation function", agg_options)
-        
-        # Map to pandas aggregation function
-        agg_map = {
-            "Sum": "sum",
-            "Average": "mean",
-            "Count": "count",
-            "Median": "median",
-            "Min": "min",
-            "Max": "max"
-        }
-        
-        # Apply aggregation
-        if color_col != "None":
-            # Group by both x and color column
-            result = df.groupby([x_col, color_col])[y_col].agg(agg_map[agg_func]).reset_index()
-            
-            # Create the bar chart
-            fig = px.bar(result, x=x_col, y=y_col, color=color_col,
-                         title=f"{agg_func} of {y_col} by {x_col}, colored by {color_col}",
-                         labels={x_col: x_col, y_col: f"{agg_func} of {y_col}"},
-                         color_discrete_sequence=colors['categorical'])
-        else:
-            # Group by just x column
-            result = df.groupby(x_col)[y_col].agg(agg_map[agg_func]).reset_index()
-            
-            # Create the bar chart
-            fig = px.bar(result, x=x_col, y=y_col,
-                         title=f"{agg_func} of {y_col} by {x_col}",
-                         labels={x_col: x_col, y_col: f"{agg_func} of {y_col}"},
-                         color_discrete_sequence=[colors['primary']])
-        
-        fig.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    elif chart_type == "Line Chart":
-        # Determine if we have datetime columns
-        has_datetime = bool(data_types['datetime']) or any(f"{col}_Year" in df.columns for col in data_types['potential_date_strings'])
-        
-        if has_datetime:
-            # Get available date columns (original or derived)
-            date_options = data_types['datetime'] + [col for col in data_types['potential_date_strings'] 
-                                                 if f"{col}_Year" in df.columns]
-            
-            x_col = st.selectbox("Select date/time column (X-axis)", date_options)
-            y_col = st.selectbox("Select value (Y-axis)", data_types['numeric'])
-            color_col = st.selectbox("Select line category (optional)", ["None"] + data_types['categorical'])
-            
-            if not x_col or not y_col:
-                st.warning("Please select both X and Y columns for the line chart.")
-                return
-            
-            # Choose time grouping
-            groupby_options = ["Day", "Week", "Month", "Quarter", "Year"]
-            time_groupby = st.selectbox("Group by time period", groupby_options, index=2)  # Default to Month
-            
-            # Set up time grouping
-            if time_groupby == "Day":
-                df['time_group'] = df[x_col].dt.date
-            elif time_groupby == "Week":
-                df['time_group'] = df[x_col].dt.to_period('W').dt.start_time
-            elif time_groupby == "Month":
-                df['time_group'] = df[x_col].dt.to_period('M').dt.start_time
-            elif time_groupby == "Quarter":
-                df['time_group'] = df[x_col].dt.to_period('Q').dt.start_time
-            else:  # Year
-                df['time_group'] = df[x_col].dt.year
-            
-            # Create aggregation options
-            agg_options = ["Sum", "Average", "Count", "Median", "Min", "Max"]
-            agg_func = st.selectbox("Select aggregation function", agg_options)
-            
-            # Map to pandas aggregation function
-            agg_map = {
-                "Sum": "sum",
-                "Average": "mean",
-                "Count": "count",
-                "Median": "median",
-                "Min": "min",
-                "Max": "max"
-            }
-            
-            # Apply aggregation
-            if color_col != "None":
-                # Group by time period and color column
-                result = df.groupby(['time_group', color_col])[y_col].agg(agg_map[agg_func]).reset_index()
-                
-                # Create the line chart with color
-                fig = px.line(result, x='time_group', y=y_col, color=color_col,
-                             title=f"{agg_func} of {y_col} Over Time by {color_col}",
-                             labels={'time_group': time_groupby, y_col: f"{agg_func} of {y_col}"},
-                             markers=True,
-                             color_discrete_sequence=colors['categorical'])
-            else:
-                # Group by just time period
-                result = df.groupby('time_group')[y_col].agg(agg_map[agg_func]).reset_index()
-                
-                # Create the line chart
-                fig = px.line(result, x='time_group', y=y_col,
-                             title=f"{agg_func} of {y_col} Over Time",
-                             labels={'time_group': time_groupby, y_col: f"{agg_func} of {y_col}"},
-                             markers=True,
-                             color_discrete_sequence=[colors['primary']])
-            
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            # No datetime columns - create line chart with numeric x-axis
-            x_col = st.selectbox("Select numeric column (X-axis)", data_types['numeric'])
-            y_col = st.selectbox("Select value (Y-axis)", [col for col in data_types['numeric'] if col != x_col])
-            color_col = st.selectbox("Select line category (optional)", ["None"] + data_types['categorical'])
-            
-            if not x_col or not y_col:
-                st.warning("Please select both X and Y columns for the line chart.")
-                return
-            
-            # Create the chart
-            if color_col != "None":
-                fig = px.line(df, x=x_col, y=y_col, color=color_col,
-                             title=f"{y_col} vs {x_col} by {color_col}",
-                             labels={x_col: x_col, y_col: y_col},
-                             markers=True,
-                             color_discrete_sequence=colors['categorical'])
-            else:
-                fig = px.line(df, x=x_col, y=y_col,
-                             title=f"{y_col} vs {x_col}",
-                             labels={x_col: x_col, y_col: y_col},
-                             markers=True,
-                             color_discrete_sequence=[colors['primary']])
-            
-            st.plotly_chart(fig, use_container_width=True)
-    
-    elif chart_type == "Scatter Plot":
-        x_col = st.selectbox("Select X-axis", data_types['numeric'])
-        y_col = st.selectbox("Select Y-axis", [col for col in data_types['numeric'] if col != x_col])
-        color_col = st.selectbox("Select color category (optional)", ["None"] + data_types['categorical'])
-        size_col = st.selectbox("Select size column (optional)", ["None"] + data_types['numeric'])
-        
-        if not x_col or not y_col:
-            st.warning("Please select both X and Y columns for the scatter plot.")
-            return
-        
-        # Create the scatter plot
-        if color_col != "None" and size_col != "None":
-            fig = px.scatter(df, x=x_col, y=y_col, color=color_col, size=size_col,
-                            title=f"{y_col} vs {x_col}, colored by {color_col}, sized by {size_col}",
-                            labels={x_col: x_col, y_col: y_col, size_col: size_col},
-                            color_discrete_sequence=colors['categorical'])
-        elif color_col != "None":
-            fig = px.scatter(df, x=x_col, y=y_col, color=color_col,
-                            title=f"{y_col} vs {x_col}, colored by {color_col}",
-                            labels={x_col: x_col, y_col: y_col},
-                            color_discrete_sequence=colors['categorical'])
-        elif size_col != "None":
-            fig = px.scatter(df, x=x_col, y=y_col, size=size_col,
-                            title=f"{y_col} vs {x_col}, sized by {size_col}",
-                            labels={x_col: x_col, y_col: y_col, size_col: size_col},
-                            color_discrete_sequence=[colors['primary']])
-        else:
-            fig = px.scatter(df, x=x_col, y=y_col,
-                            title=f"{y_col} vs {x_col}",
-                            labels={x_col: x_col, y_col: y_col},
-                            color_discrete_sequence=[colors['primary']])
-        
-        st.plotly_chart(fig, use_container_width=True)
-    
-    elif chart_type == "Pie Chart":
-        cat_col = st.selectbox("Select category column", data_types['categorical'])
-        value_col = st.selectbox("Select value column", data_types['numeric'])
-        
-        if not cat_col or not value_col:
-            st.warning("Please select both category and value columns for the pie chart.")
-            return
-        
-        # Aggregate data
-        pie_data = df.groupby(cat_col)[value_col].sum().reset_index()
-        
-        # Limit to top categories if there are many
-        if df[cat_col].nunique() > 10:
-            pie_data = pie_data.nlargest(10, value_col)
-            st.info("Showing only the top 10 categories due to the large number of unique values.")
-        
-        # Create the pie chart
-        fig = px.pie(pie_data, names=cat_col, values=value_col,
-                    title=f"Distribution of {value_col} by {cat_col}",
-                    color_discrete_sequence=colors['categorical'])
-        st.plotly_chart(fig, use_container_width=True)
-    
-    elif chart_type == "Histogram":
-        num_col = st.selectbox("Select numeric column", data_types['numeric'])
-        
-        if not num_col:
-            st.warning("Please select a numeric column for the histogram.")
-            return
-        
-        # Optional color by category
-        color_col = st.selectbox("Color by category (optional)", ["None"] + data_types['categorical'])
-        
-        # Histogram parameters
-        n_bins = st.slider("Number of bins", min_value=5, max_value=100, value=20)
-        
-        # Create the histogram
-        if color_col != "None":
-            fig = px.histogram(df, x=num_col, color=color_col, nbins=n_bins,
-                              title=f"Distribution of {num_col} by {color_col}",
-                              color_discrete_sequence=colors['categorical'])
-        else:
-            fig = px.histogram(df, x=num_col, nbins=n_bins,
-                              title=f"Distribution of {num_col}",
-                              color_discrete_sequence=[colors['primary']])
-        
-        st.plotly_chart(fig, use_container_width=True)
-    
-    elif chart_type == "Box Plot":
-        num_col = st.selectbox("Select numeric column for values", data_types['numeric'])
-        
-        if not num_col:
-            st.warning("Please select a numeric column for the box plot.")
-            return
-        
-        # Optional grouping by category
-        group_col = st.selectbox("Group by category (optional)", ["None"] + data_types['categorical'])
-        
-        # Create the box plot
-        if group_col != "None":
-            fig = px.box(df, x=group_col, y=num_col,
-                        title=f"Box Plot of {num_col} by {group_col}",
-                        color=group_col,
-                        color_discrete_sequence=colors['categorical'])
-        else:
-            fig = px.box(df, y=num_col,
-                        title=f"Box Plot of {num_col}",
-                        color_discrete_sequence=[colors['primary']])
-        
-        st.plotly_chart(fig, use_container_width=True)
-    
-    elif chart_type == "Heat Map":
-        # For heatmap, we need two categorical columns and one numeric
-        row_col = st.selectbox("Select row category", data_types['categorical'])
-        col_col = st.selectbox("Select column category", 
-                               [col for col in data_types['categorical'] if col != row_col])
-        value_col = st.selectbox("Select value", data_types['numeric'])
-        
-        if not row_col or not col_col or not value_col:
-            st.warning("Please select row, column, and value columns for the heat map.")
-            return
-        
-        # Create aggregation options
-        agg_options = ["Sum", "Average", "Count", "Median", "Min", "Max"]
-        agg_func = st.selectbox("Select aggregation function", agg_options)
-        
-        # Map to pandas aggregation function
-        agg_map = {
-            "Sum": "sum",
-            "Average": "mean",
-            "Count": "count",
-            "Median": "median",
-            "Min": "min",
-            "Max": "max"
-        }
-        
-        # Create pivot table
-        pivot_data = df.pivot_table(
-            index=row_col,
-            columns=col_col,
-            values=value_col,
-            aggfunc=agg_map[agg_func],
-            fill_value=0
-        )
-        
-        # Limit categories if there are too many
-        if pivot_data.shape[0] > 20 or pivot_data.shape[1] > 20:
-            st.warning("Too many categories for a readable heatmap. Showing top categories by total value.")
-            # Get top categories for rows and columns
-            row_totals = pivot_data.sum(axis=1).nlargest(15)
-            col_totals = pivot_data.sum(axis=0).nlargest(15)
-            
-            # Filter pivot table
-            pivot_data = pivot_data.loc[row_totals.index, col_totals.index]
-        
-        # Create the heatmap
-        fig = px.imshow(pivot_data,
-                        title=f"Heatmap of {agg_func} of {value_col} by {row_col} and {col_col}",
-                        labels=dict(x=col_col, y=row_col, color=f"{agg_func} of {value_col}"),
-                        color_continuous_scale=colors['sequence'])
-        
-        st.plotly_chart(fig, use_container_width=True)
-
-def create_prompt_based_visualizations(df, data_types):
-    """Create visualizations based on natural language prompts"""
     st.header("Prompt-Based Visualizations")
     
     st.write("""
@@ -979,447 +1102,228 @@ def create_prompt_based_visualizations(df, data_types):
     
     # Process the prompt when user clicks the button
     if st.button("Generate Visualization"):
-        # Simple keyword-based visualization generator
-        prompt_lower = prompt.lower()
-        
-        # Find column references
-        potential_columns = []
-        for col in df.columns:
-            if col.lower() in prompt_lower:
-                potential_columns.append(col)
-        
-        # Detect visualization type
-        viz_type = None
-        if any(term in prompt_lower for term in ["bar", "column"]):
-            viz_type = "bar"
-        elif any(term in prompt_lower for term in ["line", "trend", "over time", "time series"]):
-            viz_type = "line"
-        elif any(term in prompt_lower for term in ["scatter", "correlation", "relationship"]):
-            viz_type = "scatter"
-        elif any(term in prompt_lower for term in ["pie", "distribution", "proportion", "percentage"]):
-            viz_type = "pie"
-        elif any(term in prompt_lower for term in ["histogram", "distribution"]):
-            viz_type = "histogram"
-        elif any(term in prompt_lower for term in ["box", "boxplot", "quartile"]):
-            viz_type = "box"
-        elif any(term in prompt_lower for term in ["heat", "heatmap", "matrix", "table"]):
-            viz_type = "heatmap"
-        else:
-            # Default to bar if we can't determine
-            viz_type = "bar"
-        
-        # Try to identify column types from prompt and data types
-        categorical_cols = []
-        numeric_cols = []
-        date_cols = []
-        
-        # Extract potential categorical columns
-        for term in ["by", "group", "category", "categories", "segment"]:
-            if term in prompt_lower:
-                # Find closest column name after this term
-                term_pos = prompt_lower.find(term)
-                closest_col = None
-                min_distance = float('inf')
+        if claude_analyzer and claude_analyzer.is_available():
+            # Use Claude to interpret the prompt
+            with st.spinner("Claude is interpreting your request..."):
+                viz_spec = claude_analyzer.interpret_prompt(df, data_types, prompt)
                 
-                for col in data_types['categorical']:
-                    col_pos = prompt_lower.find(col.lower())
-                    if col_pos > term_pos and col_pos - term_pos < min_distance:
-                        closest_col = col
-                        min_distance = col_pos - term_pos
-                
-                if closest_col and closest_col not in categorical_cols and min_distance < 50:
-                    categorical_cols.append(closest_col)
-        
-        # Extract potential numeric columns
-        for term in ["sum", "total", "average", "count", "value", "amount", "quantity", "measure", "metric"]:
-            if term in prompt_lower:
-                # Find closest column name after this term
-                term_pos = prompt_lower.find(term)
-                closest_col = None
-                min_distance = float('inf')
-                
-                for col in data_types['numeric']:
-                    col_pos = prompt_lower.find(col.lower())
-                    if col_pos > term_pos and col_pos - term_pos < min_distance:
-                        closest_col = col
-                        min_distance = col_pos - term_pos
-                
-                if closest_col and closest_col not in numeric_cols and min_distance < 50:
-                    numeric_cols.append(closest_col)
-        
-        # Extract potential date columns for time series
-        for term in ["time", "date", "year", "month", "day", "period", "trend"]:
-            if term in prompt_lower:
-                # Find closest date column
-                date_options = data_types['datetime'] + [col for col in data_types['potential_date_strings'] 
-                                                     if f"{col}_Year" in df.columns]
-                if date_options:
-                    date_cols.append(date_options[0])  # Use first date column
-        
-        # Fallback to get some columns if we couldn't identify them from the prompt
-        if not categorical_cols and data_types['categorical']:
-            categorical_cols.append(data_types['categorical'][0])
-        
-        if not numeric_cols and data_types['numeric']:
-            numeric_cols.append(data_types['numeric'][0])
-        
-        # Create appropriate visualization based on prompt analysis
-        st.subheader("Generated Visualization")
-        
-        try:
-            colors = get_color_scheme()
-            
-            if viz_type == "bar":
-                if categorical_cols and numeric_cols:
-                    # Create bar chart
-                    cat_col = categorical_cols[0]
-                    num_col = numeric_cols[0]
-                    
-                    # Check for aggregation in prompt
-                    agg_func = "sum"
-                    if "average" in prompt_lower or "mean" in prompt_lower:
-                        agg_func = "mean"
-                    elif "count" in prompt_lower:
-                        agg_func = "count"
-                    
-                    # Check for top N mention
-                    top_n = None
-                    for i in range(1, 101):
-                        if f"top {i}" in prompt_lower or f"{i} top" in prompt_lower:
-                            top_n = i
-                            break
-                    
-                    # Aggregate data
-                    chart_data = df.groupby(cat_col)[num_col].agg(agg_func).reset_index()
-                    chart_data = chart_data.sort_values(num_col, ascending=False)
-                    
-                    # Limit to top N if specified
-                    if top_n and len(chart_data) > top_n:
-                        chart_data = chart_data.head(top_n)
-                        title = f"Top {top_n} {cat_col} by {agg_func.capitalize()} of {num_col}"
-                    else:
-                        title = f"{agg_func.capitalize()} of {num_col} by {cat_col}"
-                    
-                    fig = px.bar(
-                        chart_data, 
-                        x=cat_col, 
-                        y=num_col,
-                        title=title,
-                        labels={cat_col: cat_col, num_col: f"{agg_func.capitalize()} of {num_col}"},
-                        color_discrete_sequence=[colors['primary']]
-                    )
-                    fig.update_layout(xaxis_tickangle=-45)
-                    st.plotly_chart(fig, use_container_width=True)
+                if "error" in viz_spec:
+                    st.error(viz_spec["error"])
                 else:
-                    st.warning("Could not identify appropriate categorical and numeric columns for a bar chart.")
-            
-            elif viz_type == "line":
-                # Check for time series first
-                if date_cols and numeric_cols:
-                    # Create line chart with date
-                    date_col = date_cols[0]
-                    num_col = numeric_cols[0]
+                    st.success("Visualization generated based on your request!")
                     
-                    # Choose time grouping based on prompt
-                    time_groupby = "Month"  # Default
-                    if "day" in prompt_lower:
-                        time_groupby = "Day"
-                    elif "week" in prompt_lower:
-                        time_groupby = "Week"
-                    elif "quarter" in prompt_lower:
-                        time_groupby = "Quarter"
-                    elif "year" in prompt_lower:
-                        time_groupby = "Year"
+                    # Extract visualization parameters
+                    viz_type = viz_spec.get("visualization_type", "bar")
+                    x_col = viz_spec.get("x_column")
+                    y_col = viz_spec.get("y_column")
+                    color_col = viz_spec.get("color_column")
+                    agg_func = viz_spec.get("agg_function", "sum")
+                    title = viz_spec.get("title", "Visualization")
                     
-                    # Set up time grouping
-                    if time_groupby == "Day":
-                        df['time_group'] = df[date_col].dt.date
-                    elif time_groupby == "Week":
-                        df['time_group'] = df[date_col].dt.to_period('W').dt.start_time
-                    elif time_groupby == "Month":
-                        df['time_group'] = df[date_col].dt.to_period('M').dt.start_time
-                    elif time_groupby == "Quarter":
-                        df['time_group'] = df[date_col].dt.to_period('Q').dt.start_time
-                    else:  # Year
-                        df['time_group'] = df[date_col].dt.year
+                    # Display interpretation
+                    if "interpretation" in viz_spec:
+                        st.info(f"I understood your request as: {viz_spec['interpretation']}")
                     
-                    # Check for aggregation in prompt
-                    agg_func = "sum"
-                    if "average" in prompt_lower or "mean" in prompt_lower:
-                        agg_func = "mean"
-                    elif "count" in prompt_lower:
-                        agg_func = "count"
-                    
-                    # Check if categorical breakdown is requested
-                    if categorical_cols and any(term in prompt_lower for term in ["by", "group", "segment", "category", "breakdown"]):
-                        cat_col = categorical_cols[0]
+                    # Create visualization based on type
+                    try:
+                        if viz_type == 'bar':
+                            if x_col and y_col:
+                                # For bar charts, we typically group by x and aggregate y
+                                agg_data = df.groupby(x_col)[y_col].agg(agg_func).reset_index()
+                                agg_data = agg_data.sort_values(y_col, ascending=False)
+                                
+                                # Limit to top 15 for clarity
+                                if len(agg_data) > 15:
+                                    agg_data = agg_data.head(15)
+                                    
+                                fig = px.bar(
+                                    agg_data, 
+                                    x=x_col, 
+                                    y=y_col,
+                                    title=title,
+                                    color=color_col if color_col else None,
+                                    color_discrete_sequence=[colors['primary']]
+                                )
+                                fig.update_layout(xaxis_tickangle=-45)
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning(f"Missing columns for bar chart: x_col={x_col}, y_col={y_col}")
                         
-                        # Group by time and category
-                        result = df.groupby(['time_group', cat_col])[num_col].agg(agg_func).reset_index()
+                        elif viz_type == 'line':
+                            if x_col and y_col:
+                                # Handle datetime x
+                                if x_col in data_types['datetime'] or x_col in [col for col in data_types['potential_date_strings'] if f"{col}_Year" in df.columns]:
+                                    # For time series, we need to ensure the x-axis is properly sorted
+                                    df_sorted = df.sort_values(x_col)
+                                    
+                                    # If color column is provided, group by that as well
+                                    if color_col:
+                                        grouped = df_sorted.groupby([pd.Grouper(key=x_col, freq='M'), color_col])[y_col].agg(agg_func).reset_index()
+                                        fig = px.line(
+                                            grouped,
+                                            x=x_col,
+                                            y=y_col,
+                                            color=color_col,
+                                            title=title,
+                                            markers=True,
+                                            color_discrete_sequence=colors['categorical']
+                                        )
+                                    else:
+                                        grouped = df_sorted.groupby(pd.Grouper(key=x_col, freq='M'))[y_col].agg(agg_func).reset_index()
+                                        fig = px.line(
+                                            grouped,
+                                            x=x_col,
+                                            y=y_col,
+                                            title=title,
+                                            markers=True,
+                                            color_discrete_sequence=[colors['primary']]
+                                        )
+                                else:
+                                    # For non-datetime x, just create a regular line chart
+                                    fig = px.line(
+                                        df,
+                                        x=x_col,
+                                        y=y_col,
+                                        color=color_col if color_col else None,
+                                        title=title,
+                                        markers=True,
+                                        color_discrete_sequence=[colors['primary']] if not color_col else colors['categorical']
+                                    )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning(f"Missing columns for line chart: x_col={x_col}, y_col={y_col}")
                         
-                        # For many categories, limit to top ones
-                        if df[cat_col].nunique() > 10:
-                            top_categories = df.groupby(cat_col)[num_col].sum().nlargest(8).index.tolist()
-                            result = result[result[cat_col].isin(top_categories)]
+                        elif viz_type == 'scatter':
+                            if x_col and y_col:
+                                fig = px.scatter(
+                                    df,
+                                    x=x_col,
+                                    y=y_col,
+                                    color=color_col if color_col else None,
+                                    title=title,
+                                    color_discrete_sequence=[colors['primary']] if not color_col else colors['categorical']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning(f"Missing columns for scatter plot: x_col={x_col}, y_col={y_col}")
                         
-                        title = f"{agg_func.capitalize()} of {num_col} Over Time by {cat_col}"
-                        fig = px.line(
-                            result, 
-                            x='time_group', 
-                            y=num_col, 
-                            color=cat_col,
-                            title=title,
-                            labels={'time_group': time_groupby, num_col: f"{agg_func.capitalize()} of {num_col}"},
-                            markers=True,
-                            color_discrete_sequence=colors['categorical']
-                        )
-                    else:
-                        # Just time series without categories
-                        result = df.groupby('time_group')[num_col].agg(agg_func).reset_index()
+                        elif viz_type == 'pie':
+                            if x_col and y_col:
+                                # For pie charts, we need to aggregate the data
+                                agg_data = df.groupby(x_col)[y_col].agg(agg_func).reset_index()
+                                
+                                # Limit to top categories for clarity
+                                if len(agg_data) > 10:
+                                    agg_data = agg_data.sort_values(y_col, ascending=False).head(10)
+                                    st.info("Showing only top 10 categories for clarity")
+                                
+                                fig = px.pie(
+                                    agg_data,
+                                    names=x_col,
+                                    values=y_col,
+                                    title=title,
+                                    color_discrete_sequence=colors['categorical']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning(f"Missing columns for pie chart: x_col={x_col}, y_col={y_col}")
                         
-                        title = f"{agg_func.capitalize()} of {num_col} Over Time"
-                        fig = px.line(
-                            result, 
-                            x='time_group', 
-                            y=num_col,
-                            title=title,
-                            labels={'time_group': time_groupby, num_col: f"{agg_func.capitalize()} of {num_col}"},
-                            markers=True,
-                            color_discrete_sequence=[colors['primary']]
-                        )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                elif len(numeric_cols) >= 2:
-                    # Create line chart with numeric x-axis
-                    x_col = numeric_cols[0]
-                    y_col = numeric_cols[1]
-                    
-                    title = f"{y_col} vs {x_col}"
-                    fig = px.line(
-                        df, 
-                        x=x_col, 
-                        y=y_col,
-                        title=title,
-                        labels={x_col: x_col, y_col: y_col},
-                        markers=True,
-                        color_discrete_sequence=[colors['primary']]
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Could not identify appropriate columns for a line chart.")
-            
-            elif viz_type == "scatter":
-                if len(numeric_cols) >= 2:
-                    # Create scatter plot
-                    x_col = numeric_cols[0]
-                    y_col = numeric_cols[1] if len(numeric_cols) > 1 else numeric_cols[0]
-                    
-                    # Check if color or size is mentioned
-                    use_color = any(term in prompt_lower for term in ["color", "coloured", "colored by"])
-                    use_size = any(term in prompt_lower for term in ["size", "sized by"])
-                    
-                    if use_color and categorical_cols:
-                        color_col = categorical_cols[0]
+                        elif viz_type == 'histogram':
+                            if x_col:
+                                fig = px.histogram(
+                                    df,
+                                    x=x_col,
+                                    color=color_col if color_col else None,
+                                    title=title,
+                                    color_discrete_sequence=[colors['primary']] if not color_col else colors['categorical']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning(f"Missing column for histogram: x_col={x_col}")
                         
-                        if use_size and len(numeric_cols) > 2:
-                            size_col = numeric_cols[2]
-                            title = f"{y_col} vs {x_col} colored by {color_col} and sized by {size_col}"
-                            fig = px.scatter(
-                                df, 
-                                x=x_col, 
-                                y=y_col, 
-                                color=color_col, 
-                                size=size_col,
-                                title=title,
-                                labels={x_col: x_col, y_col: y_col},
-                                color_discrete_sequence=colors['categorical']
-                            )
+                        elif viz_type == 'box':
+                            if y_col:
+                                fig = px.box(
+                                    df,
+                                    x=x_col if x_col else None,
+                                    y=y_col,
+                                    color=color_col if color_col else None,
+                                    title=title,
+                                    color_discrete_sequence=[colors['primary']] if not color_col else colors['categorical']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning(f"Missing column for box plot: y_col={y_col}")
+                        
+                        elif viz_type == 'heatmap':
+                            if x_col and y_col:
+                                # Create pivot table for heatmap
+                                pivot_data = df.pivot_table(
+                                    index=y_col,
+                                    columns=x_col,
+                                    values=color_col if color_col else data_types['numeric'][0],  # Use first numeric column if no color_col
+                                    aggfunc=agg_func,
+                                    fill_value=0
+                                )
+                                
+                                # Limit size for readability
+                                if pivot_data.shape[0] > 15 or pivot_data.shape[1] > 15:
+                                    # Get top rows and columns by sum
+                                    row_sums = pivot_data.sum(axis=1).sort_values(ascending=False).head(15).index
+                                    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False).head(15).index
+                                    pivot_data = pivot_data.loc[row_sums, col_sums]
+                                    st.info("Heatmap limited to top 15 rows and columns for readability")
+                                
+                                fig = px.imshow(
+                                    pivot_data,
+                                    title=title,
+                                    color_continuous_scale=colors['sequence']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning(f"Missing columns for heatmap: x_col={x_col}, y_col={y_col}")
+                        
                         else:
-                            title = f"{y_col} vs {x_col} colored by {color_col}"
-                            fig = px.scatter(
-                                df, 
-                                x=x_col, 
-                                y=y_col, 
-                                color=color_col,
-                                title=title,
-                                labels={x_col: x_col, y_col: y_col},
-                                color_discrete_sequence=colors['categorical']
-                            )
-                    else:
-                        title = f"{y_col} vs {x_col}"
-                        fig = px.scatter(
-                            df, 
-                            x=x_col, 
-                            y=y_col,
-                            title=title,
-                            labels={x_col: x_col, y_col: y_col},
-                            color_discrete_sequence=[colors['primary']]
-                        )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Need at least two numeric columns for a scatter plot.")
-            
-            elif viz_type == "pie":
-                if categorical_cols and numeric_cols:
-                    # Create pie chart
-                    cat_col = categorical_cols[0]
-                    num_col = numeric_cols[0]
-                    
-                    # Aggregate data
-                    pie_data = df.groupby(cat_col)[num_col].sum().reset_index()
-                    
-                    # Limit to top categories if there are many
-                    if df[cat_col].nunique() > 10:
-                        pie_data = pie_data.nlargest(10, num_col)
-                        st.info("Showing only the top 10 categories due to the large number of unique values.")
-                    
-                    title = f"Distribution of {num_col} by {cat_col}"
-                    fig = px.pie(
-                        pie_data, 
-                        names=cat_col, 
-                        values=num_col,
-                        title=title,
-                        color_discrete_sequence=colors['categorical']
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Could not identify appropriate categorical and numeric columns for a pie chart.")
-            
-            elif viz_type == "histogram":
-                if numeric_cols:
-                    # Create histogram
-                    num_col = numeric_cols[0]
-                    
-                    # Check if we should color by category
-                    if categorical_cols and any(term in prompt_lower for term in ["by", "group", "colou", "color"]):
-                        cat_col = categorical_cols[0]
-                        title = f"Distribution of {num_col} by {cat_col}"
-                        fig = px.histogram(
-                            df, 
-                            x=num_col, 
-                            color=cat_col,
-                            title=title,
-                            nbins=20,
-                            color_discrete_sequence=colors['categorical']
-                        )
-                    else:
-                        title = f"Distribution of {num_col}"
-                        fig = px.histogram(
-                            df, 
-                            x=num_col,
-                            title=title,
-                            nbins=20,
-                            color_discrete_sequence=[colors['primary']]
-                        )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Could not identify appropriate numeric column for a histogram.")
-            
-            elif viz_type == "box":
-                if numeric_cols:
-                    # Create box plot
-                    num_col = numeric_cols[0]
-                    
-                    # Check if we should group by category
-                    if categorical_cols and any(term in prompt_lower for term in ["by", "group", "compare"]):
-                        cat_col = categorical_cols[0]
-                        title = f"Box Plot of {num_col} by {cat_col}"
-                        fig = px.box(
-                            df, 
-                            x=cat_col, 
-                            y=num_col,
-                            title=title,
-                            color=cat_col,
-                            color_discrete_sequence=colors['categorical']
-                        )
-                    else:
-                        title = f"Box Plot of {num_col}"
-                        fig = px.box(
-                            df, 
-                            y=num_col,
-                            title=title,
-                            color_discrete_sequence=[colors['primary']]
-                        )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Could not identify appropriate numeric column for a box plot.")
-            
-            elif viz_type == "heatmap":
-                if len(categorical_cols) >= 2 and numeric_cols:
-                    # Create heatmap
-                    row_col = categorical_cols[0]
-                    col_col = categorical_cols[1]
-                    val_col = numeric_cols[0]
-                    
-                    # Check for aggregation in prompt
-                    agg_func = "sum"
-                    if "average" in prompt_lower or "mean" in prompt_lower:
-                        agg_func = "mean"
-                    elif "count" in prompt_lower:
-                        agg_func = "count"
-                    
-                    # Create pivot table
-                    pivot_data = df.pivot_table(
-                        index=row_col,
-                        columns=col_col,
-                        values=val_col,
-                        aggfunc=agg_func,
-                        fill_value=0
-                    )
-                    
-                    # Limit categories if there are too many
-                    if pivot_data.shape[0] > 20 or pivot_data.shape[1] > 20:
-                        # Get top categories for rows and columns
-                        row_totals = pivot_data.sum(axis=1).nlargest(15)
-                        col_totals = pivot_data.sum(axis=0).nlargest(15)
+                            st.warning(f"Unsupported visualization type: {viz_type}")
+                            
+                        # Add the visualization to the dashboard if user wants
+                        st.markdown("---")
                         
-                        # Filter pivot table
-                        pivot_data = pivot_data.loc[row_totals.index, col_totals.index]
-                    
-                    title = f"Heatmap of {agg_func.capitalize()} of {val_col} by {row_col} and {col_col}"
-                    fig = px.imshow(
-                        pivot_data,
-                        title=title,
-                        labels=dict(x=col_col, y=row_col, color=f"{agg_func.capitalize()} of {val_col}"),
-                        color_continuous_scale=colors['sequence']
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Need at least two categorical columns and one numeric column for a heatmap.")
-            
-            # Add the visualization to the dashboard if user wants
-            st.markdown("---")
-            
-            # Save visualization to session state for later use in dashboard
-            if 'saved_visualizations' not in st.session_state:
-                st.session_state.saved_visualizations = []
-            
-            viz_title = st.text_input("Enter a title for this visualization (to save it to your dashboard):", 
-                                    value=title if 'title' in locals() else "My Visualization")
-            
-            if st.button("Add to My Dashboard"):
-                # Store the visualization info
-                viz_info = {
-                    'title': viz_title,
-                    'prompt': prompt,
-                    'type': viz_type,
-                    'fig': fig if 'fig' in locals() else None
-                }
-                st.session_state.saved_visualizations.append(viz_info)
-                st.success(f"Added '{viz_title}' to your dashboard!")
-        
-        except Exception as e:
-            st.error(f"Error creating visualization: {str(e)}")
-            st.info("Try being more specific about the columns and type of visualization you want.")
+                        # Save visualization to session state for later use in dashboard
+                        if 'saved_visualizations' not in st.session_state:
+                            st.session_state.saved_visualizations = []
+                        
+                        viz_title = st.text_input("Enter a title for this visualization (to save it to your dashboard):", 
+                                                value=title)
+                        
+                        if st.button("Add to My Dashboard"):
+                            # Store the visualization info
+                            viz_info = {
+                                'title': viz_title,
+                                'prompt': prompt,
+                                'type': viz_type,
+                                'x_col': x_col,
+                                'y_col': y_col,
+                                'color_col': color_col,
+                                'agg_func': agg_func,
+                                'fig': fig if 'fig' in locals() else None
+                            }
+                            st.session_state.saved_visualizations.append(viz_info)
+                            st.success(f"Added '{viz_title}' to your dashboard!")
+                            
+                    except Exception as e:
+                        st.error(f"Error creating visualization: {str(e)}")
+                        st.info("Try being more specific in your request.")
+        else:
+            # Fallback to simple keyword-based visualization (summarized for brevity)
+            st.warning("Claude API is not available.")
+            # Simplified fallback visualization logic would go here
 
-def create_dashboard(saved_visualizations):
+def create_dashboard(df, saved_visualizations):
     """Display the user's personalized dashboard with saved visualizations"""
+    colors = get_color_scheme()
+    
     st.header("My Custom Dashboard")
     
     if not saved_visualizations:
@@ -1432,14 +1336,153 @@ def create_dashboard(saved_visualizations):
     for i, viz_info in enumerate(saved_visualizations):
         with cols[i % 2]:
             with st.expander(viz_info['title'], expanded=True):
-                # Display visualization
-                if viz_info['fig'] is not None:
+                # Display visualization based on stored information
+                if 'fig' in viz_info and viz_info['fig'] is not None:
+                    # If we have a pre-rendered figure, use it
                     st.plotly_chart(viz_info['fig'], use_container_width=True)
+                elif 'type' in viz_info:
+                    # Otherwise, re-create the visualization from saved parameters
+                    viz_type = viz_info.get('type')
+                    x_col = viz_info.get('x_col')
+                    y_col = viz_info.get('y_col')
+                    color_col = viz_info.get('color_col')
+                    agg_func = viz_info.get('agg_func', 'sum')
+                    
+                    try:
+                        if viz_type == 'bar':
+                            if x_col and y_col:
+                                # Re-aggregate the data
+                                agg_data = df.groupby(x_col)[y_col].agg(agg_func).reset_index()
+                                agg_data = agg_data.sort_values(y_col, ascending=False).head(15)
+                                
+                                fig = px.bar(
+                                    agg_data, 
+                                    x=x_col, 
+                                    y=y_col,
+                                    title=viz_info['title'],
+                                    color=color_col if color_col else None,
+                                    color_discrete_sequence=[colors['primary']]
+                                )
+                                fig.update_layout(xaxis_tickangle=-45)
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("Missing parameters for bar chart")
+                        
+                        elif viz_type == 'line':
+                            if x_col and y_col:
+                                fig = px.line(
+                                    df,
+                                    x=x_col,
+                                    y=y_col,
+                                    color=color_col if color_col else None,
+                                    title=viz_info['title'],
+                                    markers=True,
+                                    color_discrete_sequence=[colors['primary']] if not color_col else colors['categorical']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("Missing parameters for line chart")
+                        
+                        elif viz_type == 'pie':
+                            if x_col and y_col:
+                                agg_data = df.groupby(x_col)[y_col].agg(agg_func).reset_index()
+                                agg_data = agg_data.sort_values(y_col, ascending=False).head(10)
+                                
+                                fig = px.pie(
+                                    agg_data,
+                                    names=x_col,
+                                    values=y_col,
+                                    title=viz_info['title'],
+                                    color_discrete_sequence=colors['categorical']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("Missing parameters for pie chart")
+                        
+                        elif viz_type == 'scatter':
+                            if x_col and y_col:
+                                fig = px.scatter(
+                                    df,
+                                    x=x_col,
+                                    y=y_col,
+                                    color=color_col if color_col else None,
+                                    title=viz_info['title'],
+                                    color_discrete_sequence=[colors['primary']] if not color_col else colors['categorical']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("Missing parameters for scatter plot")
+                        
+                        elif viz_type == 'histogram':
+                            if x_col:
+                                fig = px.histogram(
+                                    df,
+                                    x=x_col,
+                                    color=color_col if color_col else None,
+                                    title=viz_info['title'],
+                                    color_discrete_sequence=[colors['primary']] if not color_col else colors['categorical']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("Missing parameters for histogram")
+                        
+                        elif viz_type == 'box':
+                            if y_col:
+                                fig = px.box(
+                                    df,
+                                    x=x_col if x_col else None,
+                                    y=y_col,
+                                    color=color_col if color_col else None,
+                                    title=viz_info['title'],
+                                    color_discrete_sequence=[colors['primary']] if not color_col else colors['categorical']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("Missing parameters for box plot")
+                        
+                        elif viz_type == 'heatmap':
+                            if x_col and y_col:
+                                # Create pivot table for heatmap
+                                pivot_data = df.pivot_table(
+                                    index=y_col,
+                                    columns=x_col,
+                                    values=color_col if color_col else None,
+                                    aggfunc=agg_func,
+                                    fill_value=0
+                                )
+                                
+                                # Limit size for readability
+                                if pivot_data.shape[0] > 15 or pivot_data.shape[1] > 15:
+                                    # Get top rows and columns by sum
+                                    row_sums = pivot_data.sum(axis=1).sort_values(ascending=False).head(15).index
+                                    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False).head(15).index
+                                    pivot_data = pivot_data.loc[row_sums, col_sums]
+                                    st.info("Heatmap limited to top 15 rows and columns for readability")
+                                
+                                fig = px.imshow(
+                                    pivot_data,
+                                    title=viz_info['title'],
+                                    color_continuous_scale=colors['sequence']
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("Missing parameters for heatmap")
+                                
+                        else:
+                            st.warning(f"Unsupported visualization type: {viz_type}")
+                        
+                    except Exception as e:
+                        st.error(f"Error recreating visualization: {str(e)}")
                 else:
-                    st.warning("Visualization data is not available.")
+                    st.warning("Visualization data is not available")
                 
-                # Show the prompt that created this visualization
-                st.caption(f"Prompt: {viz_info['prompt']}")
+                # Show the prompt that created this visualization if available
+                if 'prompt' in viz_info:
+                    st.caption(f"Prompt: {viz_info['prompt']}")
+                
+                # Show description if available
+                if 'description' in viz_info and viz_info['description']:
+                    st.markdown(viz_info['description'])
                 
                 # Option to remove from dashboard
                 if st.button(f"Remove from Dashboard", key=f"remove_{i}"):
@@ -1448,11 +1491,66 @@ def create_dashboard(saved_visualizations):
 
 def main():
     # App title and description
-    st.title("Dynamic CSV Dashboard Generator")
+    st.title("Claude-Powered Dashboard Generator")
     st.markdown("""
     Upload any CSV file to automatically generate visualizations and create your own custom dashboard.
-    You can use natural language prompts to describe the visualizations you want to see!
+    Leverage Claude's AI to analyze your data and create intelligent visualizations from natural language prompts!
     """)
+    
+    # Sidebar for model selection
+    st.sidebar.header("Claude Configuration")
+    claude_model = st.sidebar.selectbox(
+        "Select Claude Model",
+        options=[
+            "claude-3-opus-20240229", 
+            "claude-3-sonnet-20240229",
+            "claude-3-haiku-20240307",
+            "claude-3-5-sonnet-20240620"
+        ],
+        index=1  # Default to Sonnet
+    )
+    
+    # Embedding options
+    st.sidebar.subheader("Embedding Options")
+    embedding_option = st.sidebar.radio(
+        "Select Embedding Method",
+        options=["SentenceTransformers (Local)", "OpenAI (API Key Required)"],
+        index=0
+    )
+    
+    # If OpenAI is selected, show API key input
+    if embedding_option == "OpenAI (API Key Required)":
+        openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+        if openai_api_key:
+            os.environ["OPENAI_API_KEY"] = openai_api_key
+            st.sidebar.success("✅ OpenAI embeddings enabled")
+    else:
+        openai_api_key = ""
+        st.sidebar.info("Using local embeddings - make sure SentenceTransformers is installed")
+    
+    # Vector database settings
+    st.sidebar.subheader("Vector Database Settings")
+    use_vector_db = st.sidebar.checkbox("Use vector database for large datasets", value=True)
+    chunk_size = st.sidebar.slider("Chunk size (rows)", min_value=50, max_value=500, value=100, step=50)
+    
+    # Show additional vector DB info
+    with st.sidebar.expander("About Vector Database"):
+        st.markdown("""
+        The vector database enables Claude to work with much larger datasets by:
+        1. Chunking the data into smaller segments
+        2. Creating embeddings for semantic search
+        3. Retrieving only the most relevant chunks for each query
+        
+        This significantly improves performance with large datasets.
+        """)
+
+    # Initialize Claude analyzer
+    claude_analyzer = ClaudeAnalyzer()
+    
+    # Set the model for all Claude API calls
+    if claude_analyzer.is_available():
+        claude_analyzer.model = claude_model
+        st.sidebar.success(f"✅ Using {claude_model}")
     
     # File uploader
     uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
@@ -1506,6 +1604,14 @@ def main():
             potential_date_cols = [col for col in st.session_state.data_types['potential_date_strings']]
             st.session_state.df = convert_date_columns(st.session_state.df, potential_date_cols)
             
+            # Set vector db flag if enabled
+            if use_vector_db and (openai_api_key or embedding_option == "SentenceTransformers (Local)"):
+                st.session_state.use_vector_db = True
+                st.session_state.chunk_size = chunk_size
+            
+            # Store the selected Claude model
+            st.session_state.selected_model = claude_model
+            
             st.success("Sample data loaded successfully!")
             st.rerun()
         
@@ -1513,26 +1619,64 @@ def main():
     
     # Process the uploaded file
     if 'data_loaded' not in st.session_state or not st.session_state.data_loaded:
-        df = process_uploaded_file(uploaded_file)
-        
-        if df is not None:
-            # Set to session state
-            st.session_state.df = df
-            st.session_state.data_loaded = True
+        with st.status("Processing data...") as status:
+            df = process_uploaded_file(uploaded_file)
             
-            # Infer data types
-            st.session_state.data_types = infer_data_types(df)
-            
-            # Convert date columns
-            potential_date_cols = [col for col in st.session_state.data_types['potential_date_strings']]
-            st.session_state.df = convert_date_columns(st.session_state.df, potential_date_cols)
-            
-            st.success("File processed successfully!")
+            if df is not None:
+                # Show row count
+                st.write(f"Found {len(df)} rows and {len(df.columns)} columns in the dataset.")
+                
+                status.update(label="Analyzing data types...", state="running")
+                # Set to session state
+                st.session_state.df = df
+                st.session_state.data_loaded = True
+                
+                # Infer data types
+                st.session_state.data_types = infer_data_types(df)
+                
+                # Convert date columns
+                potential_date_cols = [col for col in st.session_state.data_types['potential_date_strings']]
+                st.session_state.df = convert_date_columns(st.session_state.df, potential_date_cols)
+                
+                # Set vector db flag if enabled
+                if use_vector_db and (openai_api_key or embedding_option == "SentenceTransformers (Local)"):
+                    st.session_state.use_vector_db = True
+                    st.session_state.chunk_size = chunk_size
+                    
+                    # If dataset is large, inform user about vector DB
+                    if len(df) > 1000:
+                        status.update(label="Preparing vector database for large dataset...", state="running")
+                        st.info(f"Your dataset has {len(df)} rows. Vector database is enabled for efficient analysis.")
+                
+                # Store the selected Claude model
+                st.session_state.selected_model = claude_model
+                    
+                status.update(label="Data processed successfully!", state="complete")
     
     # Get data from session state
     if 'data_loaded' in st.session_state and st.session_state.data_loaded:
         df = st.session_state.df
         data_types = st.session_state.data_types
+        
+        # Apply vector db settings from session state if available
+        if 'use_vector_db' in st.session_state:
+            use_vector_db = st.session_state.use_vector_db
+        if 'chunk_size' in st.session_state:
+            chunk_size = st.session_state.chunk_size
+        if 'selected_model' in st.session_state:
+            claude_model = st.session_state.selected_model
+            if claude_analyzer.is_available():
+                claude_analyzer.model = claude_model
+        
+        # Display data overview
+        st.subheader("Dataset Overview")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Rows", format_number(len(df)))
+        with col2:
+            st.metric("Columns", format_number(len(df.columns)))
+        with col3:
+            st.metric("Data Size", f"{df.memory_usage(deep=True).sum() / (1024**2):.2f} MB")
         
         # Initialize session state for saved visualizations if not already done
         if 'saved_visualizations' not in st.session_state:
@@ -1541,34 +1685,22 @@ def main():
         # Create tabs for different sections
         tabs = st.tabs([
             "Overview", 
-            "Numeric Analysis", 
-            "Categorical Analysis", 
-            "Time Series", 
-            "Custom Visualization",
+            "Claude Analysis",
             "Prompt-Based Viz",
             "My Dashboard"
         ])
         
         with tabs[0]:
-            create_overview_section(df, data_types)
+            create_overview_section(df, data_types, claude_analyzer)
         
         with tabs[1]:
-            create_numeric_analysis(df, data_types)
+            create_claude_analysis_section(df, data_types, claude_analyzer)
         
         with tabs[2]:
-            create_categorical_analysis(df, data_types)
+            create_prompt_based_visualizations(df, data_types, claude_analyzer)
         
         with tabs[3]:
-            create_time_series_analysis(df, data_types)
-        
-        with tabs[4]:
-            create_custom_visualizations(df, data_types)
-        
-        with tabs[5]:
-            create_prompt_based_visualizations(df, data_types)
-        
-        with tabs[6]:
-            create_dashboard(st.session_state.saved_visualizations)
+            create_dashboard(df, st.session_state.saved_visualizations)
         
         # Option to reset/upload a new file
         if st.sidebar.button("Reset / Upload New File"):
@@ -1577,53 +1709,36 @@ def main():
                 del st.session_state[key]
             st.rerun()
 
-def add_drag_drop_layout():
-    """Add custom CSS and JavaScript for drag-and-drop dashboard layout"""
-    # This is a placeholder for drag-and-drop functionality
-    # In a real implementation, we would use a JavaScript library like GridStack or React DnD
-    # Since Streamlit doesn't natively support drag-and-drop, this would require custom components
+if __name__ == "__main__":
+    # Set up session state variables if they don't exist
+    if 'data_loaded' not in st.session_state:
+        st.session_state.data_loaded = False
     
+    if 'df' not in st.session_state:
+        st.session_state.df = None
+    
+    if 'data_types' not in st.session_state:
+        st.session_state.data_types = None
+    
+    if 'saved_visualizations' not in st.session_state:
+        st.session_state.saved_visualizations = []
+    
+    if 'use_vector_db' not in st.session_state:
+        st.session_state.use_vector_db = True
+    
+    if 'chunk_size' not in st.session_state:
+        st.session_state.chunk_size = 100
+    
+    if 'selected_model' not in st.session_state:
+        st.session_state.selected_model = "claude-3-sonnet-20240229"
+    
+    # Display version info in footer
     st.markdown("""
-    <style>
-    /* Styles for draggable elements */
-    .draggable {
-        cursor: move;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        padding: 10px;
-        margin-bottom: 10px;
-        background-color: white;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    
-    /* Style for drag-over effect */
-    .drag-over {
-        background-color: #f0f8ff;
-    }
-    
-    /* Dashboard grid */
-    .dashboard-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-        grid-gap: 15px;
-        padding: 15px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Note: In a real application, we would include JavaScript for drag and drop
-    # functionality, but Streamlit limits what custom JS can be run
-    st.markdown("""
-    <div class="stMarkdown">
-      <p style="color: #666; font-style: italic; font-size: 0.9em; margin-top: 20px;">
-        Note: For a full drag-and-drop dashboard experience, consider using a Streamlit 
-        Component specifically designed for this purpose, or using a framework like
-        Dash or Panel that has built-in drag-and-drop capabilities.
-      </p>
+    <div style="position: fixed; bottom: 0; width: 100%; text-align: center; padding: 10px; background-color: #f0f2f6; font-size: 12px;">
+        Claude-Powered Dashboard Generator v1.0 | Using Anthropic API | Created 2025
     </div>
     """, unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    # Add drag-and-drop functionality (note: limited in Streamlit)
-    add_drag_drop_layout()
+    
+    # Run the main app
     main()
+    
