@@ -181,17 +181,30 @@ def process_uploaded_file(uploaded_file):
         return None
 
 class ClaudeAnalyzer:
-    def __init__(self, api_key=CLAUDE_API_KEY):
+    def __init__(self, api_key=None):
+    if api_key is None:
+        # Try to get from environment variables
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        # Or from streamlit secrets
+        if hasattr(st, 'secrets') and 'CLAUDE_API_KEY' in st.secrets:
+            api_key = st.secrets["CLAUDE_API_KEY"]
+    
+    if not api_key:
+        st.warning("Claude API key not found.")
+        self.client = None
+        self.is_available = False
+    else:
         try:
+            # Initialize without proxies parameter
             self.client = anthropic.Anthropic(api_key=api_key)
             self.is_available = True
         except Exception as e:
             st.error(f"Error initializing Claude client: {str(e)}")
             self.client = None
             self.is_available = False
-        
-        # Set default model (can be changed later)
-        self.model = "claude-3-sonnet-20240229"
+    
+    # Set default model
+    self.model = "claude-3-sonnet-20240229"
     
     def analyze_data(self, df, prompt, max_rows=100):
         """Analyze data using Claude API"""
