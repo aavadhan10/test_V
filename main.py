@@ -182,7 +182,7 @@ def process_uploaded_file(uploaded_file):
 
 class ClaudeAnalyzer:
     def __init__(self, api_key=None):
-    if api_key is None:
+        if api_key is None:
         # Try to get from environment variables
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         # Or from streamlit secrets
