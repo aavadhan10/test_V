@@ -10,13 +10,6 @@ import anthropic
 import os
 from io import StringIO
 
-# Vector database support
-import chromadb
-from chromadb.utils import embedding_functions
-from chromadb.config import Settings
-import uuid
-import textwrap
-
 # Set page configuration
 st.set_page_config(
     page_title="Claude-Powered Dashboard",
@@ -187,123 +180,6 @@ def process_uploaded_file(uploaded_file):
         st.error(f"Error reading the file: {str(e)}")
         return None
 
-class VectorStore:
-    """A class to handle vector database operations for large datasets"""
-    
-    def __init__(self, collection_name="data_chunks"):
-        """Initialize the vector database"""
-        try:
-            # Use Claude's compatible embedding function - in this case we can use SentenceTransformers locally
-            try:
-                from sentence_transformers import SentenceTransformer
-                self.model = SentenceTransformer('all-MiniLM-L6-v2')
-                
-                # Create a custom embedding function
-                def sentence_transformer_ef(texts):
-                    embeddings = self.model.encode(texts)
-                    return embeddings.tolist()
-                
-                self.ef = sentence_transformer_ef
-                st.sidebar.success("✅ Using local embeddings (SentenceTransformers)")
-            except ImportError:
-                # Fallback to OpenAI if SentenceTransformers is not available
-                self.ef = embedding_functions.OpenAIEmbeddingFunction(
-                    api_key=os.environ.get("OPENAI_API_KEY", ""),
-                    model_name="text-embedding-ada-002"
-                )
-            
-            # Initialize ChromaDB client
-            self.client = chromadb.Client(Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory="./.chromadb"
-            ))
-            
-            # Try to get the collection or create a new one
-            try:
-                if isinstance(self.ef, embedding_functions.OpenAIEmbeddingFunction):
-                    self.collection = self.client.get_collection(name=collection_name, embedding_function=self.ef)
-                else:
-                    self.collection = self.client.get_collection(name=collection_name)
-            except:
-                if isinstance(self.ef, embedding_functions.OpenAIEmbeddingFunction):
-                    self.collection = self.client.create_collection(name=collection_name, embedding_function=self.ef)
-                else:
-                    self.collection = self.client.create_collection(name=collection_name)
-                
-            self.is_available = True
-        except Exception as e:
-            st.warning(f"Vector database not available: {str(e)}")
-            st.info("To enable vector database support, install ChromaDB and SentenceTransformers")
-            self.is_available = False
-    
-    def store_dataframe(self, df, chunk_size=100, overlap=0):
-        """Store a dataframe in the vector database by chunking it"""
-        if not self.is_available:
-            return False
-        
-        try:
-            # Clear existing collection
-            self.collection.delete(where={})
-            
-            # Calculate number of chunks
-            total_rows = len(df)
-            num_chunks = (total_rows + chunk_size - 1) // chunk_size
-            
-            documents = []
-            metadatas = []
-            ids = []
-            
-            # Create chunks with overlap
-            for i in range(num_chunks):
-                start_idx = max(0, i * chunk_size - overlap)
-                end_idx = min(total_rows, (i + 1) * chunk_size)
-                
-                # Create chunk
-                chunk_df = df.iloc[start_idx:end_idx]
-                chunk_csv = chunk_df.to_csv(index=False)
-                
-                # Create metadata about this chunk
-                metadata = {
-                    "start_row": int(start_idx),
-                    "end_row": int(end_idx),
-                    "num_rows": int(end_idx - start_idx),
-                    "columns": ", ".join(df.columns.tolist())
-                }
-                
-                # Add chunk to lists
-                documents.append(chunk_csv)
-                metadatas.append(metadata)
-                ids.append(f"chunk_{uuid.uuid4()}")
-            
-            # Add all chunks to the collection
-            self.collection.add(
-                documents=documents,
-                metadatas=metadatas,
-                ids=ids
-            )
-            
-            return True
-        except Exception as e:
-            st.error(f"Error storing dataframe in vector database: {str(e)}")
-            return False
-    
-    def query(self, query_text, n_results=3):
-        """Query the vector database for relevant chunks"""
-        if not self.is_available:
-            return []
-        
-        try:
-            results = self.collection.query(
-                query_texts=[query_text],
-                n_results=n_results
-            )
-            
-            return list(zip(results['documents'][0], results['metadatas'][0]))
-        except Exception as e:
-            st.error(f"Error querying vector database: {str(e)}")
-            return []
-
-
 class ClaudeAnalyzer:
     def __init__(self, api_key=CLAUDE_API_KEY):
         try:
@@ -316,14 +192,6 @@ class ClaudeAnalyzer:
         
         # Set default model (can be changed later)
         self.model = "claude-3-sonnet-20240229"
-        
-        # Initialize vector store
-        self.vector_store = VectorStore()
-        self.using_vector_store = False
-    
-    def is_available(self):
-        """Check if Claude client is available"""
-        return self.is_available
     
     def analyze_data(self, df, prompt, max_rows=100):
         """Analyze data using Claude API"""
@@ -331,18 +199,21 @@ class ClaudeAnalyzer:
             return {"error": "Claude API not available."}
         
         try:
-            # Check if we should use vector store for large datasets
-            should_use_vector_store = len(df) > max_rows and self.vector_store.is_available
+            # Sample the data for large datasets
+            sample_df = df.head(max_rows) if len(df) > max_rows else df
+            csv_string = sample_df.to_csv(index=False)
             
-            if should_use_vector_store and not self.using_vector_store:
-                with st.status("Preparing vector database for large dataset analysis..."):
-                    success = self.vector_store.store_dataframe(df)
-                    if success:
-                        st.success(f"Successfully loaded {len(df)} rows into vector database")
-                        self.using_vector_store = True
-                    else:
-                        st.warning("Failed to load data into vector database. Falling back to sample data.")
-                        should_use_vector_store = False
+            # Add statistical summary for larger datasets
+            if len(df) > max_rows:
+                stats_summary = f"""
+                Additional dataset statistics:
+                - Total rows: {len(df)} (showing first {max_rows} rows in sample)
+                - Columns: {', '.join(df.columns)}
+                - Numeric columns stats:
+                {df.describe().to_string()}
+                """
+            else:
+                stats_summary = ""
             
             # Create the prompt for Claude
             system_message = """
@@ -365,73 +236,19 @@ class ClaudeAnalyzer:
             Respond ONLY with valid JSON. Do not include any explanations or text outside the JSON structure.
             """
             
-            if should_use_vector_store:
-                # Query the vector database for relevant chunks
-                relevant_chunks = self.vector_store.query(prompt, n_results=3)
-                
-                # If we found relevant chunks, use them
-                if relevant_chunks:
-                    chunk_descriptions = ""
-                    
-                    for i, (chunk_csv, metadata) in enumerate(relevant_chunks):
-                        start_row = metadata['start_row']
-                        end_row = metadata['end_row']
-                        
-                        # Add chunk description with row range
-                        chunk_descriptions += f"\nChunk {i+1} (rows {start_row}-{end_row}):\n```\n{textwrap.shorten(chunk_csv, width=2000, placeholder='...')}\n```\n"
-                    
-                    # Add statistical summary as additional context
-                    stats_summary = f"""
-                    Dataset statistics:
-                    - Total rows: {len(df)}
-                    - Columns: {', '.join(df.columns)}
-                    - Numeric columns stats:
-                    {df.describe().to_string()}
-                    """
-                    
-                    full_prompt = f"""
-                    I'll provide you with relevant chunks from a large dataset ({len(df)} rows), based on your query.
-                    
-                    {chunk_descriptions}
-                    
-                    {stats_summary}
-                    
-                    User request: {prompt}
-                    
-                    Provide your analysis and recommendations in JSON format as specified.
-                    """
-                else:
-                    # Fallback to sample if no relevant chunks found
-                    sample_df = df.head(max_rows)
-                    csv_string = sample_df.to_csv(index=False)
-                    
-                    full_prompt = f"""
-                    Here is a sample from a large dataset ({len(df)} total rows):
-                    
-                    ```
-                    {csv_string}
-                    ```
-                    
-                    User request: {prompt}
-                    
-                    Provide your analysis and recommendations in JSON format as specified.
-                    """
-            else:
-                # Standard approach for smaller datasets
-                sample_df = df.head(max_rows) if len(df) > max_rows else df
-                csv_string = sample_df.to_csv(index=False)
-                
-                full_prompt = f"""
-                Here is a CSV dataset:
-                
-                ```
-                {csv_string}
-                ```
-                
-                User request: {prompt}
-                
-                Provide your analysis and recommendations in JSON format as specified.
-                """
+            full_prompt = f"""
+            Here is a CSV dataset:
+            
+            ```
+            {csv_string}
+            ```
+            
+            {stats_summary}
+            
+            User request: {prompt}
+            
+            Provide your analysis and recommendations in JSON format as specified.
+            """
             
             # Call to Claude API
             response = self.client.messages.create(
@@ -765,7 +582,7 @@ def create_overview_section(df, data_types, claude_analyzer=None):
             st.dataframe(cat_summary, use_container_width=True)
     
     # Claude-powered data report
-    if claude_analyzer and claude_analyzer.is_available():
+    if claude_analyzer and claude_analyzer.is_available:
         with st.expander("Claude's Data Analysis Report", expanded=True):
             if st.button("Generate Report with Claude"):
                 with st.spinner("Claude is analyzing your data..."):
@@ -831,7 +648,7 @@ def create_claude_analysis_section(df, data_types, claude_analyzer):
     """Create a section for Claude-powered data analysis"""
     st.header("Claude-Powered Data Analysis")
     
-    if not claude_analyzer or not claude_analyzer.is_available():
+    if not claude_analyzer or not claude_analyzer.is_available:
         st.warning("Claude API is not available.")
         return
     
@@ -1008,7 +825,7 @@ def create_claude_analysis_section(df, data_types, claude_analyzer):
                                         st.warning(f"Missing column for box plot: y_col={y_col}")
                                 
                                 elif viz_type == 'heatmap':
-                                    if x_col and y_col and agg_func:
+                                    if x_col and y_col:
                                         # Create pivot table for heatmap
                                         pivot_data = df.pivot_table(
                                             index=y_col,
@@ -1102,7 +919,7 @@ def create_prompt_based_visualizations(df, data_types, claude_analyzer=None):
     
     # Process the prompt when user clicks the button
     if st.button("Generate Visualization"):
-        if claude_analyzer and claude_analyzer.is_available():
+        if claude_analyzer and claude_analyzer.is_available:
             # Use Claude to interpret the prompt
             with st.spinner("Claude is interpreting your request..."):
                 viz_spec = claude_analyzer.interpret_prompt(df, data_types, prompt)
@@ -1306,8 +1123,7 @@ def create_prompt_based_visualizations(df, data_types, claude_analyzer=None):
                                 'x_col': x_col,
                                 'y_col': y_col,
                                 'color_col': color_col,
-                                'agg_func': agg_func,
-                                'fig': fig if 'fig' in locals() else None
+                                'agg_func': agg_func
                             }
                             st.session_state.saved_visualizations.append(viz_info)
                             st.success(f"Added '{viz_title}' to your dashboard!")
@@ -1318,7 +1134,7 @@ def create_prompt_based_visualizations(df, data_types, claude_analyzer=None):
         else:
             # Fallback to simple keyword-based visualization (summarized for brevity)
             st.warning("Claude API is not available.")
-            # Simplified fallback visualization logic would go here
+            # Basic fallback visualization logic
 
 def create_dashboard(df, saved_visualizations):
     """Display the user's personalized dashboard with saved visualizations"""
@@ -1337,11 +1153,8 @@ def create_dashboard(df, saved_visualizations):
         with cols[i % 2]:
             with st.expander(viz_info['title'], expanded=True):
                 # Display visualization based on stored information
-                if 'fig' in viz_info and viz_info['fig'] is not None:
-                    # If we have a pre-rendered figure, use it
-                    st.plotly_chart(viz_info['fig'], use_container_width=True)
-                elif 'type' in viz_info:
-                    # Otherwise, re-create the visualization from saved parameters
+                if 'type' in viz_info:
+                    # Re-create the visualization from saved parameters
                     viz_type = viz_info.get('type')
                     x_col = viz_info.get('x_col')
                     y_col = viz_info.get('y_col')
@@ -1443,28 +1256,32 @@ def create_dashboard(df, saved_visualizations):
                         elif viz_type == 'heatmap':
                             if x_col and y_col:
                                 # Create pivot table for heatmap
-                                pivot_data = df.pivot_table(
-                                    index=y_col,
-                                    columns=x_col,
-                                    values=color_col if color_col else None,
-                                    aggfunc=agg_func,
-                                    fill_value=0
-                                )
-                                
-                                # Limit size for readability
-                                if pivot_data.shape[0] > 15 or pivot_data.shape[1] > 15:
-                                    # Get top rows and columns by sum
-                                    row_sums = pivot_data.sum(axis=1).sort_values(ascending=False).head(15).index
-                                    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False).head(15).index
-                                    pivot_data = pivot_data.loc[row_sums, col_sums]
-                                    st.info("Heatmap limited to top 15 rows and columns for readability")
-                                
-                                fig = px.imshow(
-                                    pivot_data,
-                                    title=viz_info['title'],
-                                    color_continuous_scale=colors['sequence']
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
+                                try:
+                                    values_col = color_col if color_col else data_types['numeric'][0]
+                                    pivot_data = df.pivot_table(
+                                        index=y_col,
+                                        columns=x_col,
+                                        values=values_col,
+                                        aggfunc=agg_func,
+                                        fill_value=0
+                                    )
+                                    
+                                    # Limit size for readability
+                                    if pivot_data.shape[0] > 15 or pivot_data.shape[1] > 15:
+                                        # Get top rows and columns by sum
+                                        row_sums = pivot_data.sum(axis=1).sort_values(ascending=False).head(15).index
+                                        col_sums = pivot_data.sum(axis=0).sort_values(ascending=False).head(15).index
+                                        pivot_data = pivot_data.loc[row_sums, col_sums]
+                                        st.info("Heatmap limited to top 15 rows and columns for readability")
+                                    
+                                    fig = px.imshow(
+                                        pivot_data,
+                                        title=viz_info['title'],
+                                        color_continuous_scale=colors['sequence']
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
+                                except Exception as e:
+                                    st.warning(f"Error creating heatmap: {str(e)}")
                             else:
                                 st.warning("Missing parameters for heatmap")
                                 
@@ -1510,45 +1327,11 @@ def main():
         index=1  # Default to Sonnet
     )
     
-    # Embedding options
-    st.sidebar.subheader("Embedding Options")
-    embedding_option = st.sidebar.radio(
-        "Select Embedding Method",
-        options=["SentenceTransformers (Local)", "OpenAI (API Key Required)"],
-        index=0
-    )
-    
-    # If OpenAI is selected, show API key input
-    if embedding_option == "OpenAI (API Key Required)":
-        openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
-        if openai_api_key:
-            os.environ["OPENAI_API_KEY"] = openai_api_key
-            st.sidebar.success("✅ OpenAI embeddings enabled")
-    else:
-        openai_api_key = ""
-        st.sidebar.info("Using local embeddings - make sure SentenceTransformers is installed")
-    
-    # Vector database settings
-    st.sidebar.subheader("Vector Database Settings")
-    use_vector_db = st.sidebar.checkbox("Use vector database for large datasets", value=True)
-    chunk_size = st.sidebar.slider("Chunk size (rows)", min_value=50, max_value=500, value=100, step=50)
-    
-    # Show additional vector DB info
-    with st.sidebar.expander("About Vector Database"):
-        st.markdown("""
-        The vector database enables Claude to work with much larger datasets by:
-        1. Chunking the data into smaller segments
-        2. Creating embeddings for semantic search
-        3. Retrieving only the most relevant chunks for each query
-        
-        This significantly improves performance with large datasets.
-        """)
-
     # Initialize Claude analyzer
     claude_analyzer = ClaudeAnalyzer()
     
     # Set the model for all Claude API calls
-    if claude_analyzer.is_available():
+    if claude_analyzer.is_available:
         claude_analyzer.model = claude_model
         st.sidebar.success(f"✅ Using {claude_model}")
     
@@ -1604,11 +1387,6 @@ def main():
             potential_date_cols = [col for col in st.session_state.data_types['potential_date_strings']]
             st.session_state.df = convert_date_columns(st.session_state.df, potential_date_cols)
             
-            # Set vector db flag if enabled
-            if use_vector_db and (openai_api_key or embedding_option == "SentenceTransformers (Local)"):
-                st.session_state.use_vector_db = True
-                st.session_state.chunk_size = chunk_size
-            
             # Store the selected Claude model
             st.session_state.selected_model = claude_model
             
@@ -1638,16 +1416,6 @@ def main():
                 potential_date_cols = [col for col in st.session_state.data_types['potential_date_strings']]
                 st.session_state.df = convert_date_columns(st.session_state.df, potential_date_cols)
                 
-                # Set vector db flag if enabled
-                if use_vector_db and (openai_api_key or embedding_option == "SentenceTransformers (Local)"):
-                    st.session_state.use_vector_db = True
-                    st.session_state.chunk_size = chunk_size
-                    
-                    # If dataset is large, inform user about vector DB
-                    if len(df) > 1000:
-                        status.update(label="Preparing vector database for large dataset...", state="running")
-                        st.info(f"Your dataset has {len(df)} rows. Vector database is enabled for efficient analysis.")
-                
                 # Store the selected Claude model
                 st.session_state.selected_model = claude_model
                     
@@ -1658,14 +1426,10 @@ def main():
         df = st.session_state.df
         data_types = st.session_state.data_types
         
-        # Apply vector db settings from session state if available
-        if 'use_vector_db' in st.session_state:
-            use_vector_db = st.session_state.use_vector_db
-        if 'chunk_size' in st.session_state:
-            chunk_size = st.session_state.chunk_size
+        # Apply model setting from session state if available
         if 'selected_model' in st.session_state:
             claude_model = st.session_state.selected_model
-            if claude_analyzer.is_available():
+            if claude_analyzer.is_available:
                 claude_analyzer.model = claude_model
         
         # Display data overview
@@ -1723,12 +1487,6 @@ if __name__ == "__main__":
     if 'saved_visualizations' not in st.session_state:
         st.session_state.saved_visualizations = []
     
-    if 'use_vector_db' not in st.session_state:
-        st.session_state.use_vector_db = True
-    
-    if 'chunk_size' not in st.session_state:
-        st.session_state.chunk_size = 100
-    
     if 'selected_model' not in st.session_state:
         st.session_state.selected_model = "claude-3-sonnet-20240229"
     
@@ -1741,4 +1499,3 @@ if __name__ == "__main__":
     
     # Run the main app
     main()
-    
