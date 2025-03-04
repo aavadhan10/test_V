@@ -1192,6 +1192,10 @@ def create_claude_analysis_section(df, data_types, claude_analyzer):
         placeholder="Example: 'Analyze the relationship between service categories and revenue' or 'Find patterns in client retention'"
     )
     
+    # Initialize session state for results if not exists
+    if 'analysis_results' not in st.session_state:
+        st.session_state.analysis_results = None
+    
     if st.button("Analyze Data", use_container_width=False):
         if not analysis_prompt:
             st.warning("Please enter a prompt for analysis.")
@@ -1199,108 +1203,240 @@ def create_claude_analysis_section(df, data_types, claude_analyzer):
             with st.spinner("Analyzing your data..."):
                 # Add a small delay to show the spinner
                 time.sleep(1.5)
-                analysis_results = claude_analyzer.analyze_data(df, analysis_prompt)
-                
-                # Display summary
-                st.subheader("Summary")
-                st.markdown(f"<div class='insight-card'><strong>{analysis_results.get('summary', 'No summary provided.')}</strong></div>", unsafe_allow_html=True)
-                
-                # Display KPIs if available
-                kpis = analysis_results.get("kpis", [])
-                if kpis:
-                    st.subheader("Key Performance Indicators")
-                    kpi_cols = st.columns(min(4, len(kpis)))
+                st.session_state.analysis_results = claude_analyzer.analyze_data(df, analysis_prompt)
+    
+    # Display results if available
+    if st.session_state.analysis_results:
+        analysis_results = st.session_state.analysis_results
+        
+        # Display summary
+        st.subheader("Summary")
+        st.markdown(f"<div class='insight-card'><strong>{analysis_results.get('summary', 'No summary provided.')}</strong></div>", unsafe_allow_html=True)
+        
+        # Display KPIs if available
+        kpis = analysis_results.get("kpis", [])
+        if kpis:
+            st.subheader("Key Performance Indicators")
+            kpi_cols = st.columns(min(4, len(kpis)))
+            
+            for i, kpi in enumerate(kpis):
+                with kpi_cols[i % len(kpi_cols)]:
+                    name = kpi.get('name', f'KPI {i+1}')
+                    value = kpi.get('value', 'N/A')
+                    trend = kpi.get('trend', 'neutral')
                     
-                    for i, kpi in enumerate(kpis):
-                        with kpi_cols[i % len(kpi_cols)]:
-                            name = kpi.get('name', f'KPI {i+1}')
-                            value = kpi.get('value', 'N/A')
-                            trend = kpi.get('trend', 'neutral')
-                            
-                            # Determine delta value and color based on trend
-                            delta_value = None
-                            if trend == 'up':
-                                delta_value = "▲"
-                            elif trend == 'down':
-                                delta_value = "▼"
-                            
-                            delta_color = "normal"
-                            if "cost" in name.lower() or "expense" in name.lower():
-                                # For costs, down is good
-                                delta_color = "inverse" if trend == 'down' else "normal"
-                            else:
-                                # For revenue/other metrics, up is good
-                                delta_color = "normal" if trend == 'up' else "inverse"
-                            
-                            st.metric(name, value, delta_value, delta_color=delta_color)
-                            
-                            # Add interpretation if available
-                            interpretation = kpi.get('interpretation')
-                            if interpretation:
-                                st.caption(interpretation)
+                    # Determine delta value and color based on trend
+                    delta_value = None
+                    if trend == 'up':
+                        delta_value = "▲"
+                    elif trend == 'down':
+                        delta_value = "▼"
+                    
+                    delta_color = "normal"
+                    if "cost" in name.lower() or "expense" in name.lower():
+                        # For costs, down is good
+                        delta_color = "inverse" if trend == 'down' else "normal"
+                    else:
+                        # For revenue/other metrics, up is good
+                        delta_color = "normal" if trend == 'up' else "inverse"
+                    
+                    st.metric(name, value, delta_value, delta_color=delta_color)
+                    
+                    # Add interpretation if available
+                    interpretation = kpi.get('interpretation')
+                    if interpretation:
+                        st.caption(interpretation)
+        
+        # Display key insights
+        st.subheader("Key Insights")
+        insights = analysis_results.get("key_insights", [])
+        if insights:
+            for i, insight in enumerate(insights):
+                st.markdown(f"<div class='insight-card'><strong>#{i+1}:</strong> {insight}</div>", unsafe_allow_html=True)
+        else:
+            st.write("No insights provided.")
+        
+        # Display recommended visualizations
+        st.subheader("Recommended Visualizations")
+        viz_recs = analysis_results.get("recommended_visualizations", [])
+        
+        # Initialize session state for saved visualizations if not exists
+        if 'saved_visualizations' not in st.session_state:
+            st.session_state.saved_visualizations = []
+        
+        if viz_recs:
+            for i, viz in enumerate(viz_recs[:4]):  # Limit to 4 visualizations
+                viz_id = f"viz_{int(time.time())}_{i}"  # Generate unique ID
                 
-                # Display key insights
-                st.subheader("Key Insights")
-                insights = analysis_results.get("key_insights", [])
-                if insights:
-                    for i, insight in enumerate(insights):
-                        st.markdown(f"<div class='insight-card'><strong>#{i+1}:</strong> {insight}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='dashboard-card'>", unsafe_allow_html=True)
+                st.markdown(f"### {viz.get('title', f'Visualization {i+1}')}")
+                st.caption(viz.get('description', 'No description provided.'))
+                
+                # Extract visualization parameters
+                viz_type = viz.get('type', 'bar')
+                x_col = viz.get('x_column')
+                y_col = viz.get('y_column')
+                color_col = viz.get('color_column')
+                agg_func = viz.get('agg_function', 'sum')
+                
+                # Create and display visualization
+                fig = create_visualization(
+                    df, 
+                    viz_type, 
+                    x_col, 
+                    y_col, 
+                    color_col, 
+                    agg_func, 
+                    viz.get('title')
+                )
+                
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Add option to save this visualization to the dashboard
+                    # Create a key for the current viz to track its save state
+                    save_key = f"save_{viz_id}"
+                    if save_key not in st.session_state:
+                        st.session_state[save_key] = False
+                    
+                    if st.button(f"Add to Dashboard", key=f"add_btn_{viz_id}"):
+                        # Store the visualization info
+                        viz_info = {
+                            'id': viz_id,
+                            'title': viz.get('title', f"Visualization {i+1}"),
+                            'type': viz_type,
+                            'x_col': x_col,
+                            'y_col': y_col,
+                            'color_col': color_col,
+                            'agg_func': agg_func,
+                            'description': viz.get('description', '')
+                        }
+                        st.session_state.saved_visualizations.append(viz_info)
+                        st.session_state[save_key] = True
+                        st.rerun()  # Force a rerun to update the UI
+                    
+                    # Show success message if saved
+                    if st.session_state[save_key]:
+                        st.success(f"Added to your dashboard!")
                 else:
-                    st.write("No insights provided.")
+                    st.warning(f"Could not create {viz_type} visualization with the specified parameters.")
+                st.markdown("</div>", unsafe_allow_html=True)
+        else:
+            st.write("No visualizations recommended.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Function to fix the dashboard saving in the custom visualization section
+def create_prompt_based_visualizations(df, data_types, claude_analyzer):
+    """Create visualizations based on natural language prompts"""
+    st.header("Custom Visualization Generator")
+    
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
+    st.write("""
+    Describe the visualization you'd like to create in plain language. For example:
+    - "Show me a bar chart of total revenue by service category"
+    - "Create a line chart of client acquisition over time"
+    - "I want to see a pie chart of clients by region"
+    """)
+    
+    # Get user prompt
+    prompt = st.text_input("Enter your visualization request:", 
+                         placeholder="E.g., Show me the top 10 clients by total revenue...")
+    
+    # Initialize state for viz storage
+    if 'viz_results' not in st.session_state:
+        st.session_state.viz_results = None
+        
+    if 'viz_title' not in st.session_state:
+        st.session_state.viz_title = ""
+        
+    if 'viz_saved' not in st.session_state:
+        st.session_state.viz_saved = False
+    
+    if not prompt:
+        st.info("Enter a prompt to generate a visualization.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+    
+    # Process the prompt when user clicks the button
+    if st.button("Generate Visualization", use_container_width=False):
+        with st.spinner("Creating your visualization..."):
+            # Add a small delay to show the spinner
+            time.sleep(1)
+            st.session_state.viz_results = claude_analyzer.interpret_prompt(df, data_types, prompt)
+            st.session_state.viz_saved = False  # Reset saved state
+    
+    # Display results if available
+    if st.session_state.viz_results:
+        viz_spec = st.session_state.viz_results
+        
+        if "error" in viz_spec:
+            st.error(viz_spec["error"])
+        else:
+            st.success("Visualization generated successfully!")
+            
+            # Extract visualization parameters
+            viz_type = viz_spec.get("visualization_type", "bar")
+            x_col = viz_spec.get("x_column")
+            y_col = viz_spec.get("y_column")
+            color_col = viz_spec.get("color_column")
+            agg_func = viz_spec.get("agg_function", "sum")
+            title = viz_spec.get("title", "Visualization")
+            subtitle = viz_spec.get("subtitle", "")
+            
+            # Display interpretation
+            if "interpretation" in viz_spec:
+                st.info(f"I understood your request as: {viz_spec['interpretation']}")
+            
+            # Create visualization
+            fig = create_visualization(
+                df,
+                viz_type,
+                x_col,
+                y_col,
+                color_col,
+                agg_func,
+                title,
+                subtitle
+            )
+            
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
                 
-                # Display recommended visualizations
-                st.subheader("Recommended Visualizations")
-                viz_recs = analysis_results.get("recommended_visualizations", [])
+                # Add option to save to dashboard
+                if 'saved_visualizations' not in st.session_state:
+                    st.session_state.saved_visualizations = []
                 
-                if viz_recs:
-                    for i, viz in enumerate(viz_recs[:4]):  # Limit to 4 visualizations
-                        st.markdown(f"<div class='dashboard-card'>", unsafe_allow_html=True)
-                        st.markdown(f"### {viz.get('title', f'Visualization {i+1}')}")
-                        st.caption(viz.get('description', 'No description provided.'))
-                        
-                        # Extract visualization parameters
-                        viz_type = viz.get('type', 'bar')
-                        x_col = viz.get('x_column')
-                        y_col = viz.get('y_column')
-                        color_col = viz.get('color_column')
-                        agg_func = viz.get('agg_function', 'sum')
-                        
-                        # Create and display visualization
-                        fig = create_visualization(
-                            df, 
-                            viz_type, 
-                            x_col, 
-                            y_col, 
-                            color_col, 
-                            agg_func, 
-                            viz.get('title')
-                        )
-                        
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.warning(f"Could not create {viz_type} visualization with the specified parameters.")
-                        
-                        # Add option to save this visualization to the dashboard
-                        if 'saved_visualizations' not in st.session_state:
-                            st.session_state.saved_visualizations = []
-                        
-                        if st.button(f"Add to Dashboard", key=f"add_viz_{i}"):
-                            # Store the visualization info
-                            st.session_state.saved_visualizations.append({
-                                'title': viz.get('title', f"Visualization {i+1}"),
-                                'type': viz_type,
-                                'x_col': x_col,
-                                'y_col': y_col,
-                                'color_col': color_col,
-                                'agg_func': agg_func,
-                                'description': viz.get('description', '')
-                            })
-                            st.success(f"Added to your dashboard!")
-                        st.markdown("</div>", unsafe_allow_html=True)
+                # Show title input if not saved yet
+                if not st.session_state.viz_saved:
+                    st.session_state.viz_title = st.text_input(
+                        "Enter a title for this visualization (to save it to your dashboard):", 
+                        value=title,
+                        key=f"title_input_{int(time.time())}"
+                    )
+                    
+                    if st.button("Add to My Dashboard", key=f"save_btn_{int(time.time())}"):
+                        # Store the visualization info with unique ID
+                        viz_id = f"custom_viz_{int(time.time())}"
+                        viz_info = {
+                            'id': viz_id,
+                            'title': st.session_state.viz_title,
+                            'prompt': prompt,
+                            'type': viz_type,
+                            'x_col': x_col,
+                            'y_col': y_col,
+                            'color_col': color_col,
+                            'agg_func': agg_func,
+                            'subtitle': subtitle
+                        }
+                        st.session_state.saved_visualizations.append(viz_info)
+                        st.session_state.viz_saved = True
+                        st.rerun()  # Force a rerun to update the UI
                 
-                else:
-                    st.write("No visualizations recommended.")
+                # Show success message if saved
+                if st.session_state.viz_saved:
+                    st.success(f"Added '{st.session_state.viz_title}' to your dashboard!")
+            else:
+                st.error("Could not create visualization. Try a different request.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 def create_prompt_based_visualizations(df, data_types, claude_analyzer):
