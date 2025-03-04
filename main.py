@@ -1525,6 +1525,118 @@ def create_prompt_based_visualizations(df, data_types, claude_analyzer):
                 else:
                     st.error("Could not create visualization. Try a different request.")
     st.markdown('</div>', unsafe_allow_html=True)
+def create_prompt_based_visualizations(df, data_types, claude_analyzer):
+    """Create visualizations based on natural language prompts"""
+    st.header("Custom Visualization Generator")
+    
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
+    st.write("""
+    Describe the visualization you'd like to create in plain language. For example:
+    - "Show me a bar chart of total revenue by service category"
+    - "Create a line chart of client acquisition over time"
+    - "I want to see a pie chart of clients by region"
+    """)
+    
+    # Get user prompt
+    prompt = st.text_input("Enter your visualization request:", 
+                         placeholder="E.g., Show me the top 10 clients by total revenue...")
+    
+    # Initialize state for viz storage
+    if 'viz_results' not in st.session_state:
+        st.session_state.viz_results = None
+        
+    if 'viz_title' not in st.session_state:
+        st.session_state.viz_title = ""
+        
+    if 'viz_saved' not in st.session_state:
+        st.session_state.viz_saved = False
+    
+    if not prompt:
+        st.info("Enter a prompt to generate a visualization.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+    
+    # Process the prompt when user clicks the button
+    if st.button("Generate Visualization", use_container_width=False):
+        with st.spinner("Creating your visualization..."):
+            # Add a small delay to show the spinner
+            time.sleep(1)
+            st.session_state.viz_results = claude_analyzer.interpret_prompt(df, data_types, prompt)
+            st.session_state.viz_saved = False  # Reset saved state
+    
+    # Display results if available
+    if st.session_state.viz_results:
+        viz_spec = st.session_state.viz_results
+        
+        if "error" in viz_spec:
+            st.error(viz_spec["error"])
+        else:
+            st.success("Visualization generated successfully!")
+            
+            # Extract visualization parameters
+            viz_type = viz_spec.get("visualization_type", "bar")
+            x_col = viz_spec.get("x_column")
+            y_col = viz_spec.get("y_column")
+            color_col = viz_spec.get("color_column")
+            agg_func = viz_spec.get("agg_function", "sum")
+            title = viz_spec.get("title", "Visualization")
+            subtitle = viz_spec.get("subtitle", "")
+            
+            # Display interpretation
+            if "interpretation" in viz_spec:
+                st.info(f"I understood your request as: {viz_spec['interpretation']}")
+            
+            # Create visualization
+            fig = create_visualization(
+                df,
+                viz_type,
+                x_col,
+                y_col,
+                color_col,
+                agg_func,
+                title,
+                subtitle
+            )
+            
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Add option to save to dashboard
+                if 'saved_visualizations' not in st.session_state:
+                    st.session_state.saved_visualizations = []
+                
+                # Show title input if not saved yet
+                if not st.session_state.viz_saved:
+                    st.session_state.viz_title = st.text_input(
+                        "Enter a title for this visualization (to save it to your dashboard):", 
+                        value=title,
+                        key=f"title_input_{int(time.time())}"
+                    )
+                    
+                    if st.button("Add to My Dashboard", key=f"save_btn_{int(time.time())}"):
+                        # Store the visualization info with unique ID
+                        viz_id = f"custom_viz_{int(time.time())}"
+                        viz_info = {
+                            'id': viz_id,
+                            'title': st.session_state.viz_title,
+                            'prompt': prompt,
+                            'type': viz_type,
+                            'x_col': x_col,
+                            'y_col': y_col,
+                            'color_col': color_col,
+                            'agg_func': agg_func,
+                            'subtitle': subtitle
+                        }
+                        st.session_state.saved_visualizations.append(viz_info)
+                        st.session_state.viz_saved = True
+                        st.rerun()  # Force a rerun to update the UI
+                
+                # Show success message if saved
+                if st.session_state.viz_saved:
+                    st.success(f"Added '{st.session_state.viz_title}' to your dashboard!")
+            else:
+                st.error("Could not create visualization. Try a different request.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def create_custom_dashboard(df, saved_visualizations):
     """Display the user's personalized dashboard with saved visualizations"""
@@ -1549,6 +1661,9 @@ def create_custom_dashboard(df, saved_visualizations):
     with col2:
         if st.button("📥 Export Dashboard", use_container_width=True):
             st.success("Dashboard exported successfully!")
+    
+    # Track removals with a separate list to avoid modifying the list during iteration
+    to_remove = []
             
     # Display all saved visualizations in a grid
     cols = st.columns(2)  # 2 columns for the dashboard
@@ -1557,43 +1672,56 @@ def create_custom_dashboard(df, saved_visualizations):
         with cols[i % 2]:
             st.markdown(f'<div class="dashboard-card">', unsafe_allow_html=True)
             with st.expander(viz_info['title'], expanded=True):
-                # Re-create the visualization
-                viz_type = viz_info.get('type')
-                x_col = viz_info.get('x_col')
-                y_col = viz_info.get('y_col')
-                color_col = viz_info.get('color_col')
-                agg_func = viz_info.get('agg_func', 'sum')
-                subtitle = viz_info.get('subtitle', '')
-                
-                fig = create_visualization(
-                    df,
-                    viz_type,
-                    x_col,
-                    y_col,
-                    color_col,
-                    agg_func,
-                    viz_info['title'],
-                    subtitle
-                )
-                
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Could not recreate visualization")
-                
-                # Show the prompt that created this visualization if available
-                if 'prompt' in viz_info:
-                    st.caption(f"Created from prompt: '{viz_info['prompt']}'")
-                
-                # Show description if available
-                if 'description' in viz_info and viz_info['description']:
-                    st.markdown(viz_info['description'])
-                
-                # Option to remove from dashboard
-                if st.button(f"Remove from Dashboard", key=f"remove_{i}"):
-                    saved_visualizations.pop(i)
-                    st.rerun()
+                try:
+                    # Re-create the visualization
+                    viz_type = viz_info.get('type')
+                    x_col = viz_info.get('x_col')
+                    y_col = viz_info.get('y_col')
+                    color_col = viz_info.get('color_col')
+                    agg_func = viz_info.get('agg_func', 'sum')
+                    subtitle = viz_info.get('subtitle', '')
+                    
+                    fig = create_visualization(
+                        df,
+                        viz_type,
+                        x_col,
+                        y_col,
+                        color_col,
+                        agg_func,
+                        viz_info['title'],
+                        subtitle
+                    )
+                    
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("Could not recreate visualization")
+                    
+                    # Show the prompt that created this visualization if available
+                    if 'prompt' in viz_info:
+                        st.caption(f"Created from prompt: '{viz_info['prompt']}'")
+                    
+                    # Show description if available
+                    if 'description' in viz_info and viz_info['description']:
+                        st.markdown(viz_info['description'])
+                    
+                    # Option to remove from dashboard with unique key
+                    viz_id = viz_info.get('id', f"viz_{i}")
+                    if st.button(f"Remove from Dashboard", key=f"remove_{viz_id}"):
+                        to_remove.append(i)
+                except Exception as e:
+                    st.error(f"Error displaying visualization: {str(e)}")
+                    if st.button(f"Remove broken visualization", key=f"remove_broken_{i}"):
+                        to_remove.append(i)
             st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Process removals after iteration
+    if to_remove:
+        # Remove items in reverse order to maintain correct indices
+        for idx in sorted(to_remove, reverse=True):
+            if idx < len(saved_visualizations):
+                saved_visualizations.pop(idx)
+        st.rerun()
     
     # Add option to create a PDF report
     st.markdown("""
@@ -1611,7 +1739,7 @@ def create_custom_dashboard(df, saved_visualizations):
         if st.button("📧 Share Dashboard", use_container_width=True):
             st.info("Enter email addresses to share this dashboard:")
             st.text_input("Recipients (comma separated):")
-            if st.button("Send"):
+            if st.button("Send", key="send_dashboard_email"):
                 st.success("Dashboard shared successfully!")
 
 def create_data_filters(df, data_types):
