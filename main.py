@@ -1782,11 +1782,11 @@ def main():
         st.info("Please upload a CSV file to get started or use sample data.")
         
         # Show sample data option
-        #if st.button("Use Sample Practice Data"):
+        if st.button("Use Sample Practice Data"):
             # Create sample data
-      #      import pandas as pd
-       #     import numpy as np
-        #    from datetime import datetime, timedelta
+            import pandas as pd
+            import numpy as np
+            from datetime import datetime, timedelta
             
             # Create sample dates
             start_date = datetime(2024, 1, 1)
