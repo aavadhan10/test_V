@@ -33,131 +33,167 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS for improved aesthetics
-st.markdown("""
-<style>
-    /* Main styles */
-    .main .block-container {padding-top: 1rem; padding-bottom: 1rem;}
-    
-    /* Metrics */
-    div[data-testid="stMetricValue"] {font-size: 32px; font-weight: 600;}
-    div[data-testid="stMetricLabel"] {font-size: 16px; opacity: 0.8;}
-    
-    /* Headers */
-    h1 {color: #2C3E50; font-weight: 800; margin-bottom: 1.5rem;}
-    h2 {color: #34495E; font-weight: 700; margin-top: 1rem;}
-    h3 {color: #34495E; font-weight: 600;}
-    
-    /* Login container */
-    .login-container {
-        max-width: 450px;
-        margin: 100px auto;
-        padding: 40px;
-        border-radius: 10px;
-        box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-        background: white;
-    }
-    .login-header {text-align: center; margin-bottom: 20px;}
-    
-    /* Cards */
-    .dashboard-card {
-        border-radius: 10px;
-        border: 1px solid #f0f2f6;
-        padding: 1.5rem;
-        background: white;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        margin-bottom: 1rem;
-    }
-    
-    /* Sidebar */
-    .sidebar .sidebar-content {background-color: #2C3E50;}
-    
-    /* Link buttons */
-    .link-button {
-        display: inline-block;
-        border-radius: 4px;
-        padding: 8px 16px;
-        background-color: #4e8df5;
-        color: white;
-        text-decoration: none;
-        font-weight: 500;
-        margin: 0.25rem 0;
-    }
-    
-    /* Custom tabs */
-    .custom-tab {
-        padding: 10px 15px;
-        border-radius: 5px 5px 0 0;
-        background-color: #f0f2f6;
-        border: 1px solid #e6e9ef;
-        border-bottom: none;
-        cursor: pointer;
-        margin-right: 2px;
-    }
-    .custom-tab.active {
-        background-color: white;
-        border-bottom: 3px solid #4e8df5;
-        font-weight: 600;
-    }
-    
-    /* Success icon */
-    .success-icon {color: #4CAF50; font-size: 18px;}
-    
-    /* Insight card */
-    .insight-card {
-        background: linear-gradient(135deg, #f6f8fa 0%, #f0f2f6 100%);
-        border-radius: 8px;
-        padding: 15px;
-        margin-bottom: 10px;
-        border-left: 4px solid #4e8df5;
-    }
-    
-    /* Filters container */
-    .filters-container {
-        background-color: #f9fafb;
-        padding: 15px;
-        border-radius: 8px;
-        margin-bottom: 20px;
-    }
-    
-    /* Custom footer */
-    .custom-footer {
-        position: fixed;
-        bottom: 0;
-        width: 100%;
-        background-color: #2C3E50;
-        color: white;
-        text-align: center;
-        padding: 10px;
-        font-size: 12px;
-        z-index: 999;
-    }
-    
-    /* Loader */
-    .stSpinner > div {border-color: #4e8df5 !important;}
-    
-    /* Custom scrollbar */
-    ::-webkit-scrollbar {width: 8px; height: 8px;}
-    ::-webkit-scrollbar-track {background: #f1f1f1;}
-    ::-webkit-scrollbar-thumb {background: #c1c1c1; border-radius: 10px;}
-    ::-webkit-scrollbar-thumb:hover {background: #a8a8a8;}
-    
-    /* Velora branding colors for charts */
-    .plot-container {box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-radius: 10px;}
-    
-</style>
-""", unsafe_allow_html=True)
+# Function to display the Velora logo
+def display_logo():
+    """Display the Velora.AI logo in the app"""
+    try:
+        # Load from your GitHub repository
+        github_logo_path = "https://raw.githubusercontent.com/aavadhan10/test_V/main/logo.png"
+        
+        # Create centered logo container
+        st.markdown(
+            """
+            <div style="text-align: center; padding: 20px 0px 30px 0px;">
+                <img src="{}" width="180px">
+            </div>
+            """.format(github_logo_path),
+            unsafe_allow_html=True
+        )
+    except Exception as e:
+        # If logo loading fails, use text fallback
+        st.markdown(
+            """
+            <div style="text-align: center; padding: 10px 0px 20px 0px;">
+                <h1 style="color: #9C27B0; font-size: 2.5rem; margin-bottom: 0;">VELORA.AI</h1>
+                <p style="color: #555; margin-top: 0;">Practice Intelligence Platform</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+# Function to set Velora styling
+def set_velora_styling():
+    """Set custom CSS styling to match Velora branding"""
+    st.markdown("""
+    <style>
+        /* Main styles */
+        .main .block-container {padding-top: 1rem; padding-bottom: 1rem;}
+        
+        /* Metrics */
+        div[data-testid="stMetricValue"] {font-size: 32px; font-weight: 600; color: #9C27B0;}
+        div[data-testid="stMetricLabel"] {font-size: 16px; opacity: 0.8;}
+        
+        /* Headers */
+        h1 {color: #2C3E50; font-weight: 800; margin-bottom: 1.5rem;}
+        h2 {color: #34495E; font-weight: 700; margin-top: 1rem;}
+        h3 {color: #34495E; font-weight: 600;}
+        
+        /* Login container */
+        .login-container {
+            max-width: 450px;
+            margin: 100px auto;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            background: white;
+        }
+        .login-header {text-align: center; margin-bottom: 20px;}
+        
+        /* Cards */
+        .dashboard-card {
+            border-radius: 10px;
+            border: 1px solid #f0f2f6;
+            padding: 1.5rem;
+            background: white;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            margin-bottom: 1rem;
+        }
+        
+        /* Sidebar */
+        .sidebar .sidebar-content {background-color: #2C3E50;}
+        
+        /* Link buttons */
+        .link-button {
+            display: inline-block;
+            border-radius: 4px;
+            padding: 8px 16px;
+            background-color: #9C27B0;
+            color: white;
+            text-decoration: none;
+            font-weight: 500;
+            margin: 0.25rem 0;
+        }
+        
+        /* Custom tabs */
+        .custom-tab {
+            padding: 10px 15px;
+            border-radius: 5px 5px 0 0;
+            background-color: #f0f2f6;
+            border: 1px solid #e6e9ef;
+            border-bottom: none;
+            cursor: pointer;
+            margin-right: 2px;
+        }
+        .custom-tab.active {
+            background-color: white;
+            border-bottom: 3px solid #9C27B0;
+            font-weight: 600;
+        }
+        
+        /* Success icon */
+        .success-icon {color: #4CAF50; font-size: 18px;}
+        
+        /* Insight card */
+        .insight-card {
+            background: linear-gradient(135deg, #f6f8fa 0%, #f0f2f6 100%);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #9C27B0;
+        }
+        
+        /* Filters container */
+        .filters-container {
+            background-color: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        /* Custom footer */
+        .custom-footer {
+            position: fixed;
+            bottom: 0;
+            width: 100%;
+            background-color: #2C3E50;
+            color: white;
+            text-align: center;
+            padding: 10px;
+            font-size: 12px;
+            z-index: 999;
+        }
+        
+        /* Loader */
+        .stSpinner > div {border-color: #9C27B0 !important;}
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {width: 8px; height: 8px;}
+        ::-webkit-scrollbar-track {background: #f1f1f1;}
+        ::-webkit-scrollbar-thumb {background: #c1c1c1; border-radius: 10px;}
+        ::-webkit-scrollbar-thumb:hover {background: #a8a8a8;}
+        
+        /* Buttons */
+        .stButton>button {
+            background-color: #9C27B0;
+            color: white;
+        }
+        .stButton>button:hover {
+            background-color: #7B1FA2;
+            color: white;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
 # Define standard color scheme
 COLORS = {
-    'primary': '#4e8df5',     # Blue - Velora primary
+    'primary': '#9C27B0',     # Velora purple
     'secondary': '#34c759',   # Green - for positive metrics
     'accent': '#FF9500',      # Orange - for warnings or highlights
     'neutral': '#8E8E93',     # Gray - for secondary information
     'negative': '#FF3B30',    # Red - for negative metrics or alerts
     'background': '#F0F2F5',  # Light gray - for backgrounds
-    'sequence': px.colors.sequential.Blues,
-    'categorical': ['#4e8df5', '#34c759', '#FF9500', '#5856D6', '#FF2D55', '#007AFF', '#5AC8FA', '#FFCC00'],
+    'sequence': px.colors.sequential.Purples,  # Updated to purple theme
+    'categorical': ['#9C27B0', '#34c759', '#FF9500', '#5856D6', '#FF2D55', '#007AFF', '#5AC8FA', '#FFCC00'],
     'diverging': px.colors.diverging.RdBu,
 }
 
@@ -185,13 +221,28 @@ class PasswordProtection:
         """Display the login form"""
         st.markdown('<div class="login-container">', unsafe_allow_html=True)
         
-        # Logo placeholder
-        st.markdown("""
-        <div class="login-header">
-            <h1 style="margin-bottom:5px;">Velora AI</h1>
-            <p style="margin-top:0;">Practice Intelligence Platform</p>
-        </div>
-        """, unsafe_allow_html=True)
+        # Logo display
+        try:
+            # Use your GitHub repository
+            github_logo_path = "https://raw.githubusercontent.com/aavadhan10/test_V/main/logo.png"
+            
+            st.markdown(
+                """
+                <div class="login-header" style="text-align: center; margin-bottom: 30px;">
+                    <img src="{}" width="180px" style="margin-bottom: 15px;">
+                    <p style="margin-top:10px; color: #555;">Practice Intelligence Platform</p>
+                </div>
+                """.format(github_logo_path),
+                unsafe_allow_html=True
+            )
+        except:
+            # Fallback to text if image loading fails
+            st.markdown("""
+            <div class="login-header">
+                <h1 style="margin-bottom:5px; color: #9C27B0;">Velora AI</h1>
+                <p style="margin-top:0;">Practice Intelligence Platform</p>
+            </div>
+            """, unsafe_allow_html=True)
         
         st.markdown("### Login to Dashboard")
         password_input = st.text_input("Password", type="password")
@@ -1016,6 +1067,135 @@ def create_visualization(df, viz_type, x_col, y_col, color_col=None, agg_func="s
         st.error(f"Error creating visualization: {str(e)}")
         return None
 
+def create_data_filters(df, data_types):
+    """Create data filters sidebar"""
+    st.sidebar.header("Data Filters")
+    
+    filters_applied = False
+    filtered_df = df.copy()
+    
+    # Date range filter if we have datetime columns
+    if data_types['datetime']:
+        st.sidebar.subheader("Date Range")
+        date_col = data_types['datetime'][0]  # Use the first datetime column
+        
+        min_date = pd.to_datetime(filtered_df[date_col].min())
+        max_date = pd.to_datetime(filtered_df[date_col].max())
+        
+        # Use date input for date range selection
+        start_date = st.sidebar.date_input(
+            "Start Date",
+            value=min_date,
+            min_value=min_date,
+            max_value=max_date
+        )
+        
+        end_date = st.sidebar.date_input(
+            "End Date",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date
+        )
+        
+        # Apply date filter
+        if start_date and end_date:
+            filtered_df = filtered_df[
+                (pd.to_datetime(filtered_df[date_col]).dt.date >= start_date) & 
+                (pd.to_datetime(filtered_df[date_col]).dt.date <= end_date)
+            ]
+            filters_applied = True
+    
+    # Categorical filters
+    if data_types['categorical']:
+        st.sidebar.subheader("Categories")
+        
+        # Select up to 3 categorical columns for filtering
+        for col in data_types['categorical'][:3]:
+            try:
+                # Get unique values, handle mixed types by converting to string first
+                unique_values = filtered_df[col].astype(str).unique()
+                
+                # Try to sort them, but handle case where they can't be sorted
+                try:
+                    unique_values = sorted(unique_values)
+                except:
+                    # If sorting fails, just leave them in original order
+                    pass
+                
+                # If too many values, use multiselect with default "All"
+                if len(unique_values) > 3 and len(unique_values) <= 30:
+                    selected_values = st.sidebar.multiselect(
+                        f"Select {col.replace('_', ' ').title()}",
+                        options=unique_values,
+                        default=unique_values
+                    )
+                    
+                    if selected_values and len(selected_values) < len(unique_values):
+                        filtered_df = filtered_df[filtered_df[col].astype(str).isin(selected_values)]
+                        filters_applied = True
+                
+                # If few values, use checkboxes
+                elif len(unique_values) <= 3:
+                    st.sidebar.write(f"**{col.replace('_', ' ').title()}**")
+                    selected_values = []
+                    
+                    for value in unique_values:
+                        if st.sidebar.checkbox(str(value), value=True, key=f"{col}_{value}"):
+                            selected_values.append(value)
+                    
+                    if selected_values and len(selected_values) < len(unique_values):
+                        filtered_df = filtered_df[filtered_df[col].astype(str).isin(selected_values)]
+                        filters_applied = True
+            except Exception as e:
+                st.sidebar.warning(f"Could not create filter for {col}: {str(e)}")
+    
+    # Numeric range filters
+    if data_types['numeric']:
+        st.sidebar.subheader("Numeric Filters")
+        
+        # Select up to 2 numeric columns for range filtering
+        for col in data_types['numeric'][:2]:
+            try:
+                # Try to get min and max values, but handle errors
+                try:
+                    min_val = float(filtered_df[col].min())
+                    max_val = float(filtered_df[col].max())
+                    
+                    # Ensure min and max are not the same to avoid slider errors
+                    if min_val == max_val:
+                        min_val = min_val - 1
+                        max_val = max_val + 1
+                    
+                    # Add a slider for range selection
+                    range_values = st.sidebar.slider(
+                        f"{col.replace('_', ' ').title()} Range",
+                        min_value=min_val,
+                        max_value=max_val,
+                        value=(min_val, max_val),
+                        step=(max_val - min_val) / 100 if (max_val - min_val) > 0 else 0.1
+                    )
+                    
+                    if range_values != (min_val, max_val):
+                        filtered_df = filtered_df[
+                            (filtered_df[col] >= range_values[0]) & 
+                            (filtered_df[col] <= range_values[1])
+                        ]
+                        filters_applied = True
+                except:
+                    st.sidebar.warning(f"Could not create range filter for {col}")
+            except Exception as e:
+                st.sidebar.warning(f"Error with column {col}: {str(e)}")
+    
+    # Reset filters button
+    if filters_applied:
+        if st.sidebar.button("Reset All Filters"):
+            st.rerun()
+        
+        # Show count of filtered records
+        st.sidebar.info(f"Showing {len(filtered_df):,} of {len(df):,} records")
+    
+    return filtered_df
+
 def create_overview_section(df, data_types):
     """Create an overview section with key metrics and basic visualizations"""
     st.header("Practice Performance Overview")
@@ -1325,206 +1505,6 @@ def create_claude_analysis_section(df, data_types, claude_analyzer):
             st.write("No visualizations recommended.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Function to fix the dashboard saving in the custom visualization section
-def create_prompt_based_visualizations(df, data_types, claude_analyzer):
-    """Create visualizations based on natural language prompts"""
-    st.header("Custom Visualization Generator")
-    
-    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
-    st.write("""
-    Describe the visualization you'd like to create in plain language. For example:
-    - "Show me a bar chart of total revenue by service category"
-    - "Create a line chart of client acquisition over time"
-    - "I want to see a pie chart of clients by region"
-    """)
-    
-    # Get user prompt
-    prompt = st.text_input("Enter your visualization request:", 
-                         placeholder="E.g., Show me the top 10 clients by total revenue...")
-    
-    # Initialize state for viz storage
-    if 'viz_results' not in st.session_state:
-        st.session_state.viz_results = None
-        
-    if 'viz_title' not in st.session_state:
-        st.session_state.viz_title = ""
-        
-    if 'viz_saved' not in st.session_state:
-        st.session_state.viz_saved = False
-    
-    if not prompt:
-        st.info("Enter a prompt to generate a visualization.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
-    
-    # Process the prompt when user clicks the button
-    if st.button("Generate Visualization", use_container_width=False):
-        with st.spinner("Creating your visualization..."):
-            # Add a small delay to show the spinner
-            time.sleep(1)
-            st.session_state.viz_results = claude_analyzer.interpret_prompt(df, data_types, prompt)
-            st.session_state.viz_saved = False  # Reset saved state
-    
-    # Display results if available
-    if st.session_state.viz_results:
-        viz_spec = st.session_state.viz_results
-        
-        if "error" in viz_spec:
-            st.error(viz_spec["error"])
-        else:
-            st.success("Visualization generated successfully!")
-            
-            # Extract visualization parameters
-            viz_type = viz_spec.get("visualization_type", "bar")
-            x_col = viz_spec.get("x_column")
-            y_col = viz_spec.get("y_column")
-            color_col = viz_spec.get("color_column")
-            agg_func = viz_spec.get("agg_function", "sum")
-            title = viz_spec.get("title", "Visualization")
-            subtitle = viz_spec.get("subtitle", "")
-            
-            # Display interpretation
-            if "interpretation" in viz_spec:
-                st.info(f"I understood your request as: {viz_spec['interpretation']}")
-            
-            # Create visualization
-            fig = create_visualization(
-                df,
-                viz_type,
-                x_col,
-                y_col,
-                color_col,
-                agg_func,
-                title,
-                subtitle
-            )
-            
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Add option to save to dashboard
-                if 'saved_visualizations' not in st.session_state:
-                    st.session_state.saved_visualizations = []
-                
-                # Show title input if not saved yet
-                if not st.session_state.viz_saved:
-                    st.session_state.viz_title = st.text_input(
-                        "Enter a title for this visualization (to save it to your dashboard):", 
-                        value=title,
-                        key=f"title_input_{int(time.time())}"
-                    )
-                    
-                    if st.button("Add to My Dashboard", key=f"save_btn_{int(time.time())}"):
-                        # Store the visualization info with unique ID
-                        viz_id = f"custom_viz_{int(time.time())}"
-                        viz_info = {
-                            'id': viz_id,
-                            'title': st.session_state.viz_title,
-                            'prompt': prompt,
-                            'type': viz_type,
-                            'x_col': x_col,
-                            'y_col': y_col,
-                            'color_col': color_col,
-                            'agg_func': agg_func,
-                            'subtitle': subtitle
-                        }
-                        st.session_state.saved_visualizations.append(viz_info)
-                        st.session_state.viz_saved = True
-                        st.rerun()  # Force a rerun to update the UI
-                
-                # Show success message if saved
-                if st.session_state.viz_saved:
-                    st.success(f"Added '{st.session_state.viz_title}' to your dashboard!")
-            else:
-                st.error("Could not create visualization. Try a different request.")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-def create_prompt_based_visualizations(df, data_types, claude_analyzer):
-    """Create visualizations based on natural language prompts"""
-    st.header("Custom Visualization Generator")
-    
-    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
-    st.write("""
-    Describe the visualization you'd like to create in plain language. For example:
-    - "Show me a bar chart of total revenue by service category"
-    - "Create a line chart of client acquisition over time"
-    - "I want to see a pie chart of clients by region"
-    """)
-    
-    # Get user prompt
-    prompt = st.text_area("Enter your visualization request:", 
-                         height=80,
-                         placeholder="E.g., Show me the top 10 clients by total revenue...")
-    
-    if not prompt:
-        st.info("Enter a prompt to generate a visualization.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
-    
-    # Process the prompt when user clicks the button
-    if st.button("Generate Visualization", use_container_width=False):
-        with st.spinner("Creating your visualization..."):
-            # Add a small delay to show the spinner
-            time.sleep(1)
-            viz_spec = claude_analyzer.interpret_prompt(df, data_types, prompt)
-            
-            if "error" in viz_spec:
-                st.error(viz_spec["error"])
-            else:
-                st.success("Visualization generated successfully!")
-                
-                # Extract visualization parameters
-                viz_type = viz_spec.get("visualization_type", "bar")
-                x_col = viz_spec.get("x_column")
-                y_col = viz_spec.get("y_column")
-                color_col = viz_spec.get("color_column")
-                agg_func = viz_spec.get("agg_function", "sum")
-                title = viz_spec.get("title", "Visualization")
-                subtitle = viz_spec.get("subtitle", "")
-                
-                # Display interpretation
-                if "interpretation" in viz_spec:
-                    st.info(f"I understood your request as: {viz_spec['interpretation']}")
-                
-                # Create visualization
-                fig = create_visualization(
-                    df,
-                    viz_type,
-                    x_col,
-                    y_col,
-                    color_col,
-                    agg_func,
-                    title,
-                    subtitle
-                )
-                
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Add option to save to dashboard
-                    if 'saved_visualizations' not in st.session_state:
-                        st.session_state.saved_visualizations = []
-                    
-                    viz_title = st.text_input("Enter a title for this visualization (to save it to your dashboard):", 
-                                            value=title)
-                    
-                    if st.button("Add to My Dashboard"):
-                        # Store the visualization info
-                        viz_info = {
-                            'title': viz_title,
-                            'prompt': prompt,
-                            'type': viz_type,
-                            'x_col': x_col,
-                            'y_col': y_col,
-                            'color_col': color_col,
-                            'agg_func': agg_func,
-                            'subtitle': subtitle
-                        }
-                        st.session_state.saved_visualizations.append(viz_info)
-                        st.success(f"Added '{viz_title}' to your dashboard!")
-                else:
-                    st.error("Could not create visualization. Try a different request.")
-    st.markdown('</div>', unsafe_allow_html=True)
 def create_prompt_based_visualizations(df, data_types, claude_analyzer):
     """Create visualizations based on natural language prompts"""
     st.header("Custom Visualization Generator")
@@ -1742,145 +1722,20 @@ def create_custom_dashboard(df, saved_visualizations):
             if st.button("Send", key="send_dashboard_email"):
                 st.success("Dashboard shared successfully!")
 
-def create_data_filters(df, data_types):
-    """Create data filters sidebar"""
-    st.sidebar.header("Data Filters")
-    
-    filters_applied = False
-    filtered_df = df.copy()
-    
-    # Date range filter if we have datetime columns
-    if data_types['datetime']:
-        st.sidebar.subheader("Date Range")
-        date_col = data_types['datetime'][0]  # Use the first datetime column
-        
-        min_date = pd.to_datetime(filtered_df[date_col].min())
-        max_date = pd.to_datetime(filtered_df[date_col].max())
-        
-        # Use date input for date range selection
-        start_date = st.sidebar.date_input(
-            "Start Date",
-            value=min_date,
-            min_value=min_date,
-            max_value=max_date
-        )
-        
-        end_date = st.sidebar.date_input(
-            "End Date",
-            value=max_date,
-            min_value=min_date,
-            max_value=max_date
-        )
-        
-        # Apply date filter
-        if start_date and end_date:
-            filtered_df = filtered_df[
-                (pd.to_datetime(filtered_df[date_col]).dt.date >= start_date) & 
-                (pd.to_datetime(filtered_df[date_col]).dt.date <= end_date)
-            ]
-            filters_applied = True
-    
-    # Categorical filters
-    if data_types['categorical']:
-        st.sidebar.subheader("Categories")
-        
-        # Select up to 3 categorical columns for filtering
-        for col in data_types['categorical'][:3]:
-            try:
-                # Get unique values, handle mixed types by converting to string first
-                unique_values = filtered_df[col].astype(str).unique()
-                
-                # Try to sort them, but handle case where they can't be sorted
-                try:
-                    unique_values = sorted(unique_values)
-                except:
-                    # If sorting fails, just leave them in original order
-                    pass
-                
-                # If too many values, use multiselect with default "All"
-                if len(unique_values) > 3 and len(unique_values) <= 30:
-                    selected_values = st.sidebar.multiselect(
-                        f"Select {col.replace('_', ' ').title()}",
-                        options=unique_values,
-                        default=unique_values
-                    )
-                    
-                    if selected_values and len(selected_values) < len(unique_values):
-                        filtered_df = filtered_df[filtered_df[col].astype(str).isin(selected_values)]
-                        filters_applied = True
-                
-                # If few values, use checkboxes
-                elif len(unique_values) <= 3:
-                    st.sidebar.write(f"**{col.replace('_', ' ').title()}**")
-                    selected_values = []
-                    
-                    for value in unique_values:
-                        if st.sidebar.checkbox(str(value), value=True, key=f"{col}_{value}"):
-                            selected_values.append(value)
-                    
-                    if selected_values and len(selected_values) < len(unique_values):
-                        filtered_df = filtered_df[filtered_df[col].astype(str).isin(selected_values)]
-                        filters_applied = True
-            except Exception as e:
-                st.sidebar.warning(f"Could not create filter for {col}: {str(e)}")
-    
-    # Numeric range filters
-    if data_types['numeric']:
-        st.sidebar.subheader("Numeric Filters")
-        
-        # Select up to 2 numeric columns for range filtering
-        for col in data_types['numeric'][:2]:
-            try:
-                # Try to get min and max values, but handle errors
-                try:
-                    min_val = float(filtered_df[col].min())
-                    max_val = float(filtered_df[col].max())
-                    
-                    # Ensure min and max are not the same to avoid slider errors
-                    if min_val == max_val:
-                        min_val = min_val - 1
-                        max_val = max_val + 1
-                    
-                    # Add a slider for range selection
-                    range_values = st.sidebar.slider(
-                        f"{col.replace('_', ' ').title()} Range",
-                        min_value=min_val,
-                        max_value=max_val,
-                        value=(min_val, max_val),
-                        step=(max_val - min_val) / 100 if (max_val - min_val) > 0 else 0.1
-                    )
-                    
-                    if range_values != (min_val, max_val):
-                        filtered_df = filtered_df[
-                            (filtered_df[col] >= range_values[0]) & 
-                            (filtered_df[col] <= range_values[1])
-                        ]
-                        filters_applied = True
-                except:
-                    st.sidebar.warning(f"Could not create range filter for {col}")
-            except Exception as e:
-                st.sidebar.warning(f"Error with column {col}: {str(e)}")
-    
-    # Reset filters button
-    if filters_applied:
-        if st.sidebar.button("Reset All Filters"):
-            st.rerun()
-        
-        # Show count of filtered records
-        st.sidebar.info(f"Showing {len(filtered_df):,} of {len(df):,} records")
-    
-    return filtered_df
-
 def main():
     # Initialize password protection
     password_protection = PasswordProtection(DEMO_PASSWORD)
+    
+    # Add Velora styling
+    set_velora_styling()
     
     # Check if user is authenticated
     if not password_protection.require_login():
         return
     
-    # App title and description
-    st.title("Velora AI Practice Intelligence")
+    # App title and logo
+    display_logo()
+    st.title("Practice Intelligence Platform")
     
     if st.session_state.get('demo_mode', False):
         st.info("🔍 You are in demo mode with sample data. For a personalized experience, upload your own practice data.")
@@ -2109,3 +1964,4 @@ if __name__ == "__main__":
     
     # Run the main app
     main()
+    
