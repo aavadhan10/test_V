@@ -248,13 +248,13 @@ class PasswordProtection:
         
         col1, col2 = st.columns([1,1])
         
-        with col1:
-            if st.button("Login", use_container_width=True):
-                if password_input == self.password:
-                    st.session_state.authenticated = True
-                    st.rerun()
-                else:
-                    st.error("Incorrect password")
+       # with col1:
+          #  if st.button("Login", use_container_width=True):
+           #     if password_input == self.password:
+           #         st.session_state.authenticated = True
+           #         st.rerun()
+           #     else:
+           #         st.error("Incorrect password")
         
         with col2:
             if st.button("Demo Mode", use_container_width=True):
@@ -262,7 +262,7 @@ class PasswordProtection:
                 st.session_state.demo_mode = True
                 st.rerun()
         
-        st.markdown("<p style='font-size:12px; margin-top:20px;'>For demo, use password: 'velorademo'</p>", unsafe_allow_html=True)
+       # st.markdown("<p style='font-size:12px; margin-top:20px;'>For demo, use password: 'velorademo'</p>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
         
         # Footer
