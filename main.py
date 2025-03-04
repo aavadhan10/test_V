@@ -1522,32 +1522,43 @@ def create_data_filters(df, data_types):
         
         # Select up to 3 categorical columns for filtering
         for col in data_types['categorical'][:3]:
-            unique_values = sorted(filtered_df[col].unique())
-            
-            # If too many values, use multiselect with default "All"
-            if len(unique_values) > 3 and len(unique_values) <= 30:
-                selected_values = st.sidebar.multiselect(
-                    f"Select {col.replace('_', ' ').title()}",
-                    options=unique_values,
-                    default=unique_values
-                )
+            try:
+                # Get unique values, handle mixed types by converting to string first
+                unique_values = filtered_df[col].astype(str).unique()
                 
-                if selected_values and len(selected_values) < len(unique_values):
-                    filtered_df = filtered_df[filtered_df[col].isin(selected_values)]
-                    filters_applied = True
-            
-            # If few values, use checkboxes
-            elif len(unique_values) <= 3:
-                st.sidebar.write(f"**{col.replace('_', ' ').title()}**")
-                selected_values = []
+                # Try to sort them, but handle case where they can't be sorted
+                try:
+                    unique_values = sorted(unique_values)
+                except:
+                    # If sorting fails, just leave them in original order
+                    pass
                 
-                for value in unique_values:
-                    if st.sidebar.checkbox(str(value), value=True, key=f"{col}_{value}"):
-                        selected_values.append(value)
+                # If too many values, use multiselect with default "All"
+                if len(unique_values) > 3 and len(unique_values) <= 30:
+                    selected_values = st.sidebar.multiselect(
+                        f"Select {col.replace('_', ' ').title()}",
+                        options=unique_values,
+                        default=unique_values
+                    )
+                    
+                    if selected_values and len(selected_values) < len(unique_values):
+                        filtered_df = filtered_df[filtered_df[col].astype(str).isin(selected_values)]
+                        filters_applied = True
                 
-                if selected_values and len(selected_values) < len(unique_values):
-                    filtered_df = filtered_df[filtered_df[col].isin(selected_values)]
-                    filters_applied = True
+                # If few values, use checkboxes
+                elif len(unique_values) <= 3:
+                    st.sidebar.write(f"**{col.replace('_', ' ').title()}**")
+                    selected_values = []
+                    
+                    for value in unique_values:
+                        if st.sidebar.checkbox(str(value), value=True, key=f"{col}_{value}"):
+                            selected_values.append(value)
+                    
+                    if selected_values and len(selected_values) < len(unique_values):
+                        filtered_df = filtered_df[filtered_df[col].astype(str).isin(selected_values)]
+                        filters_applied = True
+            except Exception as e:
+                st.sidebar.warning(f"Could not create filter for {col}: {str(e)}")
     
     # Numeric range filters
     if data_types['numeric']:
@@ -1555,24 +1566,36 @@ def create_data_filters(df, data_types):
         
         # Select up to 2 numeric columns for range filtering
         for col in data_types['numeric'][:2]:
-            min_val = float(filtered_df[col].min())
-            max_val = float(filtered_df[col].max())
-            
-            # Add a slider for range selection
-            range_values = st.sidebar.slider(
-                f"{col.replace('_', ' ').title()} Range",
-                min_value=min_val,
-                max_value=max_val,
-                value=(min_val, max_val),
-                step=(max_val - min_val) / 100
-            )
-            
-            if range_values != (min_val, max_val):
-                filtered_df = filtered_df[
-                    (filtered_df[col] >= range_values[0]) & 
-                    (filtered_df[col] <= range_values[1])
-                ]
-                filters_applied = True
+            try:
+                # Try to get min and max values, but handle errors
+                try:
+                    min_val = float(filtered_df[col].min())
+                    max_val = float(filtered_df[col].max())
+                    
+                    # Ensure min and max are not the same to avoid slider errors
+                    if min_val == max_val:
+                        min_val = min_val - 1
+                        max_val = max_val + 1
+                    
+                    # Add a slider for range selection
+                    range_values = st.sidebar.slider(
+                        f"{col.replace('_', ' ').title()} Range",
+                        min_value=min_val,
+                        max_value=max_val,
+                        value=(min_val, max_val),
+                        step=(max_val - min_val) / 100 if (max_val - min_val) > 0 else 0.1
+                    )
+                    
+                    if range_values != (min_val, max_val):
+                        filtered_df = filtered_df[
+                            (filtered_df[col] >= range_values[0]) & 
+                            (filtered_df[col] <= range_values[1])
+                        ]
+                        filters_applied = True
+                except:
+                    st.sidebar.warning(f"Could not create range filter for {col}")
+            except Exception as e:
+                st.sidebar.warning(f"Error with column {col}: {str(e)}")
     
     # Reset filters button
     if filters_applied:
