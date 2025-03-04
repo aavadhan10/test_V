@@ -78,16 +78,16 @@ def set_velora_styling():
         h2 {color: #34495E; font-weight: 700; margin-top: 1rem;}
         h3 {color: #34495E; font-weight: 600;}
         
-        /* Login container */
-        .login-container {
-            max-width: 450px;
-            margin: 100px auto;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-            background: white;
-        }
-        .login-header {text-align: center; margin-bottom: 20px;}
+        #/* Login container */
+       # .login-container {
+       #     max-width: 450px;
+        #    margin: 100px auto;
+       #     padding: 40px;
+       #     border-radius: 10px;
+       #     box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+       #     background: white;
+      #  }
+     #   .login-header {text-align: center; margin-bottom: 20px;}
         
         /* Cards */
         .dashboard-card {
