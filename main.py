@@ -218,61 +218,95 @@ class PasswordProtection:
             return True
     
     def _display_login_form(self):
-        """Display the login form"""
-        st.markdown('<div class="login-container">', unsafe_allow_html=True)
+    """Display the login form"""
+    # Add this line to remove the white box at the top
+    st.markdown("""
+    <style>
+        /* Remove white box at top */
+        .block-container {
+            padding-top: 0rem !important;
+            margin-top: 0rem !important;
+        }
+        /* Hide the main menu and hamburger button */
+        #MainMenu {visibility: hidden;}
+        header {visibility: hidden;}
+        /* Fix footer on login page */
+        .custom-footer {
+            position: fixed;
+            bottom: 0;
+            width: 100%;
+            background-color: #2C3E50;
+            color: white;
+            text-align: center;
+            padding: 10px;
+            font-size: 12px;
+            z-index: 999;
+        }
+        /* Adjust login container position */
+        .login-container {
+            max-width: 450px;
+            margin: 80px auto 100px auto;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            background: white;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="login-container">', unsafe_allow_html=True)
+    
+    # Logo display
+    try:
+        # Use your GitHub repository
+        github_logo_path = "https://raw.githubusercontent.com/aavadhan10/test_V/main/logo.png"
         
-        # Logo display
-        try:
-            # Use your GitHub repository
-            github_logo_path = "https://raw.githubusercontent.com/aavadhan10/test_V/main/logo.png"
-            
-            st.markdown(
-                """
-                <div class="login-header" style="text-align: center; margin-bottom: 30px;">
-                    <img src="{}" width="180px" style="margin-bottom: 15px;">
-                    <p style="margin-top:10px; color: #555;">AI Powered Law Practice Intelligence Platform</p>
-                </div>
-                """.format(github_logo_path),
-                unsafe_allow_html=True
-            )
-        except:
-            # Fallback to text if image loading fails
-            st.markdown("""
-            <div class="login-header">
-                <h1 style="margin-bottom:5px; color: #9C27B0;">Velora AI</h1>
-                <p style="margin-top:0;">AI Powered Law Practice Intelligence Platform</p>
+        st.markdown(
+            """
+            <div class="login-header" style="text-align: center; margin-bottom: 30px;">
+                <img src="{}" width="180px" style="margin-bottom: 15px;">
+                <p style="margin-top:10px; color: #555;">AI Powered Law Practice Intelligence Platform</p>
             </div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("### Login to Dashboard")
-        password_input = st.text_input("Password", type="password")
-        
-        col1, col2 = st.columns([1,1])
-        
-        with col1:
-            if st.button("Login", use_container_width=True):
-                if password_input == self.password:
-                    st.session_state.authenticated = True
-                    st.rerun()
-                else:
-                    st.error("Incorrect password")
-        
-        with col2:
-            if st.button("Demo Mode", use_container_width=True):
-                st.session_state.authenticated = True
-                st.session_state.demo_mode = True
-                st.rerun()
-        
-        st.markdown("<p style='font-size:12px; margin-top:20px;'>For demo, use password: 'velorademo'</p>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Footer
+            """.format(github_logo_path),
+            unsafe_allow_html=True
+        )
+    except:
+        # Fallback to text if image loading fails
         st.markdown("""
-        <div class="custom-footer">
-            Velora AI Practice Intelligence Platform | © 2025 Velora, Inc. All rights reserved.
+        <div class="login-header">
+            <h1 style="margin-bottom:5px; color: #9C27B0;">Velora AI</h1>
+            <p style="margin-top:0;">Practice Intelligence Platform</p>
         </div>
         """, unsafe_allow_html=True)
-
+    
+    st.markdown("### Login to Dashboard")
+    password_input = st.text_input("Password", type="password")
+    
+    col1, col2 = st.columns([1,1])
+    
+    with col1:
+        if st.button("Login", use_container_width=True):
+            if password_input == self.password:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect password")
+    
+    with col2:
+        if st.button("Demo Mode", use_container_width=True):
+            st.session_state.authenticated = True
+            st.session_state.demo_mode = True
+            st.rerun()
+    
+    st.markdown("<p style='font-size:12px; margin-top:20px;'>For demo, use password: 'velorademo'</p>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Footer
+    st.markdown("""
+    <div class="custom-footer">
+        Velora AI Practice Intelligence Platform | © 2025 Velora, Inc. All rights reserved.
+    </div>
+    """, unsafe_allow_html=True)
 class ClaudeAnalyzer:
     """Handles interactions with Claude API for data analysis"""
     
