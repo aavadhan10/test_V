@@ -78,6 +78,17 @@ def set_velora_styling():
         h2 {color: #34495E; font-weight: 700; margin-top: 1rem;}
         h3 {color: #34495E; font-weight: 600;}
         
+        #/* Login container */
+       # .login-container {
+       #     max-width: 450px;
+        #    margin: 100px auto;
+       #     padding: 40px;
+       #     border-radius: 10px;
+       #     box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+       #     background: white;
+      #  }
+     #   .login-header {text-align: center; margin-bottom: 20px;}
+        
         /* Cards */
         .dashboard-card {
             border-radius: 10px;
@@ -185,7 +196,6 @@ COLORS = {
     'categorical': ['#1E88E5', '#D81B60', '#FFC107', '#004D40', '#8E24AA', '#FB8C00', '#43A047', '#5E35B1'],
     'diverging': px.colors.diverging.Spectral,  # Multicolor diverging scale
 }
-
 class PasswordProtection:
     """Handles password protection for the app"""
     
@@ -252,6 +262,7 @@ class PasswordProtection:
                 st.session_state.demo_mode = True
                 st.rerun()
         
+       # st.markdown("<p style='font-size:12px; margin-top:20px;'>For demo, use password: 'velorademo'</p>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
         
         # Footer
@@ -662,24 +673,11 @@ def process_uploaded_file(uploaded_file):
         return None
 
 def create_visualization(df, viz_type, x_col, y_col, color_col=None, agg_func="sum", title=None, subtitle=None):
-    """Create a visualization based on specifications with improved error handling"""
+    """Create a visualization based on specifications"""
     if not title:
         title = f"{viz_type.capitalize()} of {y_col} by {x_col}" if x_col and y_col else "Visualization"
     
     try:
-        # Validate columns exist in dataframe
-        all_cols = list(df.columns)
-        
-        if x_col and x_col not in all_cols:
-            return None, f"Column '{x_col}' not found in data"
-        
-        if y_col and y_col not in all_cols:
-            return None, f"Column '{y_col}' not found in data"
-        
-        if color_col and color_col not in all_cols:
-            # Just set color_col to None if it doesn't exist instead of failing
-            color_col = None
-        
         if viz_type == 'bar':
             if x_col and y_col:
                 # Group and aggregate the data
@@ -733,7 +731,7 @@ def create_visualization(df, viz_type, x_col, y_col, color_col=None, agg_func="s
                         font_family="Arial"
                     )
                 )
-                return fig, None  # Return figure and no error
+                return fig
             
         elif viz_type == 'line':
             if x_col and y_col:
@@ -812,7 +810,7 @@ def create_visualization(df, viz_type, x_col, y_col, color_col=None, agg_func="s
                         font_family="Arial"
                     )
                 )
-                return fig, None
+                return fig
             
         elif viz_type == 'scatter':
             if x_col and y_col:
@@ -859,7 +857,7 @@ def create_visualization(df, viz_type, x_col, y_col, color_col=None, agg_func="s
                         font_family="Arial"
                     )
                 )
-                return fig, None
+                return fig
             
         elif viz_type == 'pie':
             if x_col and y_col:
@@ -914,7 +912,7 @@ def create_visualization(df, viz_type, x_col, y_col, color_col=None, agg_func="s
                         font_family="Arial"
                     )
                 )
-                return fig, None
+                return fig
             
         elif viz_type == 'histogram':
             if x_col:
@@ -962,7 +960,7 @@ def create_visualization(df, viz_type, x_col, y_col, color_col=None, agg_func="s
                     ),
                     bargap=0.1
                 )
-                return fig, None
+                return fig
             
         elif viz_type == 'box':
             if y_col:
@@ -1008,7 +1006,7 @@ def create_visualization(df, viz_type, x_col, y_col, color_col=None, agg_func="s
                         font_family="Arial"
                     )
                 )
-                return fig, None
+                return fig
             
         elif viz_type == 'heatmap':
             if x_col and y_col:
@@ -1059,13 +1057,14 @@ def create_visualization(df, viz_type, x_col, y_col, color_col=None, agg_func="s
                         font_family="Arial"
                     )
                 )
-                return fig, None
+                return fig
         
         # If we get here, return None to indicate failure
-        return None, "Could not create visualization with the provided parameters"
+        return None
     
     except Exception as e:
-        return None, f"Error creating visualization: {str(e)}"
+        st.error(f"Error creating visualization: {str(e)}")
+        return None
 
 def create_data_filters(df, data_types):
     """Create data filters sidebar"""
@@ -1201,6 +1200,7 @@ def create_overview_section(df, data_types):
     st.header("Practice Performance Overview")
     
     # Basic data information in metric cards
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Total Records", f"{len(df):,}")
@@ -1210,6 +1210,7 @@ def create_overview_section(df, data_types):
         st.metric("Numeric Metrics", f"{len(data_types['numeric']):,}")
     with col4:
         st.metric("Time Period", "Last 12 Months")
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Sample data
     with st.expander("Sample Data", expanded=True):
@@ -1241,6 +1242,7 @@ def create_overview_section(df, data_types):
     st.subheader("Key Performance Indicators")
     
     # KPI cards
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
     if len(data_types['numeric']) >= 4:
         kpi_cols = st.columns(4)
         
@@ -1255,73 +1257,104 @@ def create_overview_section(df, data_types):
                     f"{delta:.2f}" if abs(delta) > 0.01 else None,
                     delta_color="normal" if delta >= 0 else "inverse" if 'cost' in col.lower() else "normal"
                 )
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Show a couple of basic visualizations if data is available
     if len(data_types['numeric']) >= 1:
         st.subheader("Performance Trends")
+        st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         
         # First numeric column for histogram
         with col1:
             with st.expander("Distribution Analysis", expanded=True):
-                fig, _ = create_visualization(
+                fig = px.histogram(
                     df, 
-                    'histogram', 
-                    data_types['numeric'][0], 
-                    None, 
-                    None, 
-                    None, 
-                    f"Distribution of {data_types['numeric'][0].replace('_', ' ').title()}"
+                    x=data_types['numeric'][0], 
+                    title=f"Distribution of {data_types['numeric'][0].replace('_', ' ').title()}",
+                    color_discrete_sequence=[COLORS['primary']],
+                    opacity=0.8,
+                    marginal="box"
                 )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(
+                    plot_bgcolor='white',
+                    margin=dict(l=40, r=40, t=60, b=40),
+                    xaxis=dict(
+                        title=data_types['numeric'][0].replace('_', ' ').title(),
+                        showgrid=True,
+                        gridcolor='#eee'
+                    ),
+                    yaxis=dict(
+                        title="Frequency",
+                        showgrid=True,
+                        gridcolor='#eee'
+                    )
+                )
+                st.plotly_chart(fig, use_container_width=True)
         
         # If we have a second numeric column, show a box plot
         if len(data_types['numeric']) >= 2:
             with col2:
                 with st.expander("Outlier Analysis", expanded=True):
-                    fig, _ = create_visualization(
+                    fig = px.box(
                         df, 
-                        'box', 
-                        None, 
-                        data_types['numeric'][1], 
-                        None, 
-                        None, 
-                        f"Distribution of {data_types['numeric'][1].replace('_', ' ').title()}"
+                        y=data_types['numeric'][1], 
+                        title=f"Distribution of {data_types['numeric'][1].replace('_', ' ').title()}",
+                        color_discrete_sequence=[COLORS['secondary']]
                     )
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
+                    fig.update_layout(
+                        plot_bgcolor='white',
+                        margin=dict(l=40, r=40, t=60, b=40),
+                        yaxis=dict(
+                            title=data_types['numeric'][1].replace('_', ' ').title(),
+                            showgrid=True,
+                            gridcolor='#eee'
+                        )
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # If we have one numeric and one categorical column, create a bar chart
     if data_types['numeric'] and data_types['categorical']:
         st.subheader("Performance by Category")
+        st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
         cat_col = data_types['categorical'][0]
         num_col = data_types['numeric'][0]
         
         with st.expander(f"{num_col.replace('_', ' ').title()} by {cat_col.replace('_', ' ').title()}", expanded=True):
-            fig, _ = create_visualization(
-                df, 
-                'bar', 
-                cat_col, 
-                num_col, 
-                None, 
-                'sum', 
-                f"Total {num_col.replace('_', ' ').title()} by {cat_col.replace('_', ' ').title()}"
-            )
+            # Group and aggregate
+            agg_data = df.groupby(cat_col)[num_col].sum().reset_index()
+            agg_data = agg_data.sort_values(num_col, ascending=False).head(10)
             
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Add some insights about this chart
-                st.markdown('<div class="insight-card">', unsafe_allow_html=True)
-                
-                # Group and aggregate for insight generation
-                agg_data = df.groupby(cat_col)[num_col].sum().reset_index()
-                agg_data = agg_data.sort_values(num_col, ascending=False)
-                
-                if not agg_data.empty:
-                    st.markdown(f"**Insight:** The category **{agg_data.iloc[0][cat_col]}** has the highest total {num_col.replace('_', ' ')}, representing **{(agg_data.iloc[0][num_col]/agg_data[num_col].sum())*100:.1f}%** of the overall total.")
-                st.markdown('</div>', unsafe_allow_html=True)
+            fig = px.bar(
+                agg_data, 
+                x=cat_col, 
+                y=num_col,
+                title=f"Total {num_col.replace('_', ' ').title()} by {cat_col.replace('_', ' ').title()}",
+                color_discrete_sequence=[COLORS['primary']]
+            )
+            fig.update_layout(
+                xaxis_tickangle=-45,
+                plot_bgcolor='white',
+                margin=dict(l=40, r=40, t=60, b=100),
+                xaxis=dict(
+                    title=cat_col.replace('_', ' ').title(),
+                    showgrid=True,
+                    gridcolor='#eee'
+                ),
+                yaxis=dict(
+                    title=num_col.replace('_', ' ').title(),
+                    showgrid=True,
+                    gridcolor='#eee'
+                )
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Add some insights about this chart
+            st.markdown('<div class="insight-card">', unsafe_allow_html=True)
+            st.markdown(f"**Insight:** The category **{agg_data.iloc[0][cat_col]}** has the highest total {num_col.replace('_', ' ')}, representing **{(agg_data.iloc[0][num_col]/agg_data[num_col].sum())*100:.1f}%** of the overall total.")
+            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def create_claude_analysis_section(df, data_types, claude_analyzer):
     """Create a section for Claude-powered data analysis"""
@@ -1329,6 +1362,8 @@ def create_claude_analysis_section(df, data_types, claude_analyzer):
     
     # Let user ask Claude to analyze data
     st.subheader("Ask about your practice data")
+    
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
     
     analysis_prompt = st.text_area(
         "What would you like to analyze in your practice data?",
@@ -1412,7 +1447,7 @@ def create_claude_analysis_section(df, data_types, claude_analyzer):
             for i, viz in enumerate(viz_recs[:4]):  # Limit to 4 visualizations
                 viz_id = f"viz_{int(time.time())}_{i}"  # Generate unique ID
                 
-                # Removed dashboard card container div
+                st.markdown(f"<div class='dashboard-card'>", unsafe_allow_html=True)
                 st.markdown(f"### {viz.get('title', f'Visualization {i+1}')}")
                 st.caption(viz.get('description', 'No description provided.'))
                 
@@ -1423,8 +1458,8 @@ def create_claude_analysis_section(df, data_types, claude_analyzer):
                 color_col = viz.get('color_column')
                 agg_func = viz.get('agg_function', 'sum')
                 
-                # Create and display visualization with error handling
-                fig, error = create_visualization(
+                # Create and display visualization
+                fig = create_visualization(
                     df, 
                     viz_type, 
                     x_col, 
@@ -1463,17 +1498,17 @@ def create_claude_analysis_section(df, data_types, claude_analyzer):
                     if st.session_state[save_key]:
                         st.success(f"Added to your dashboard!")
                 else:
-                    st.warning(f"Visualization error: {error}")
-                
-                # Removed closing container div
+                    st.warning(f"Could not create {viz_type} visualization with the specified parameters.")
+                st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.write("No visualizations recommended.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def create_prompt_based_visualizations(df, data_types, claude_analyzer):
     """Create visualizations based on natural language prompts"""
     st.header("Custom Visualization Generator")
     
-    # Removed dashboard card container div
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
     st.write("""
     Describe the visualization you'd like to create in plain language. For example:
     - "Show me a bar chart of total revenue by service category"
@@ -1497,6 +1532,7 @@ def create_prompt_based_visualizations(df, data_types, claude_analyzer):
     
     if not prompt:
         st.info("Enter a prompt to generate a visualization.")
+        st.markdown('</div>', unsafe_allow_html=True)
         return
     
     # Process the prompt when user clicks the button
@@ -1529,8 +1565,8 @@ def create_prompt_based_visualizations(df, data_types, claude_analyzer):
             if "interpretation" in viz_spec:
                 st.info(f"I understood your request as: {viz_spec['interpretation']}")
             
-            # Create visualization with error handling
-            fig, error = create_visualization(
+            # Create visualization
+            fig = create_visualization(
                 df,
                 viz_type,
                 x_col,
@@ -1578,7 +1614,8 @@ def create_prompt_based_visualizations(df, data_types, claude_analyzer):
                 if st.session_state.viz_saved:
                     st.success(f"Added '{st.session_state.viz_title}' to your dashboard!")
             else:
-                st.error(f"Could not create visualization: {error}")
+                st.error("Could not create visualization. Try a different request.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def create_custom_dashboard(df, saved_visualizations):
     """Display the user's personalized dashboard with saved visualizations"""
@@ -1612,7 +1649,7 @@ def create_custom_dashboard(df, saved_visualizations):
     
     for i, viz_info in enumerate(saved_visualizations):
         with cols[i % 2]:
-            # Removed dashboard card container div
+            st.markdown(f'<div class="dashboard-card">', unsafe_allow_html=True)
             with st.expander(viz_info['title'], expanded=True):
                 try:
                     # Re-create the visualization
@@ -1623,7 +1660,7 @@ def create_custom_dashboard(df, saved_visualizations):
                     agg_func = viz_info.get('agg_func', 'sum')
                     subtitle = viz_info.get('subtitle', '')
                     
-                    fig, error = create_visualization(
+                    fig = create_visualization(
                         df,
                         viz_type,
                         x_col,
@@ -1637,7 +1674,7 @@ def create_custom_dashboard(df, saved_visualizations):
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.warning(f"Could not recreate visualization: {error}")
+                        st.warning("Could not recreate visualization")
                     
                     # Show the prompt that created this visualization if available
                     if 'prompt' in viz_info:
@@ -1655,7 +1692,8 @@ def create_custom_dashboard(df, saved_visualizations):
                     st.error(f"Error displaying visualization: {str(e)}")
                     if st.button(f"Remove broken visualization", key=f"remove_broken_{i}"):
                         to_remove.append(i)
-            
+            st.markdown('</div>', unsafe_allow_html=True)
+    
     # Process removals after iteration
     if to_remove:
         # Remove items in reverse order to maintain correct indices
@@ -1666,8 +1704,10 @@ def create_custom_dashboard(df, saved_visualizations):
     
     # Add option to create a PDF report
     st.markdown("""
+    <div class="dashboard-card">
     <h3>Export Options</h3>
     <p>Create a shareable report from your dashboard visualizations.</p>
+    </div>
     """, unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
@@ -1680,123 +1720,6 @@ def create_custom_dashboard(df, saved_visualizations):
             st.text_input("Recipients (comma separated):")
             if st.button("Send", key="send_dashboard_email"):
                 st.success("Dashboard shared successfully!")
-
-def create_clio_connection_tab():
-    """Create a tab for connecting to Clio API"""
-    st.header("Clio Practice Management Integration")
-    
-    # Connection status
-    if 'clio_connected' not in st.session_state:
-        st.session_state.clio_connected = False
-    
-    if not st.session_state.clio_connected:
-        st.info("Connect to your Clio account to automatically import practice data.")
-        
-        # Create two columns for the form
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            clio_api_key = st.text_input("Clio API Key", type="password", 
-                                         help="Find your API key in Clio's Account Settings > API")
-        
-        with col2:
-            client_id = st.text_input("Client ID", 
-                                     help="Your Clio application client ID")
-        
-        # Optional advanced settings in expander
-        with st.expander("Advanced Settings"):
-            st.selectbox("Data Refresh Frequency", 
-                         options=["Daily", "Weekly", "Manual only"],
-                         index=0)
-            st.checkbox("Include archived matters", value=False)
-            st.checkbox("Include archived clients", value=False)
-            st.multiselect("Data to import", 
-                           options=["Matters", "Clients", "Timekeeping", "Billing", "Payments", "Tasks"],
-                           default=["Matters", "Clients", "Timekeeping", "Billing"])
-        
-        # Connect button
-        if st.button("Connect to Clio"):
-            # In a real app, validate the API key and client ID
-            # For this demo, simulate a successful connection with any input
-            if clio_api_key and client_id:
-                with st.spinner("Connecting to Clio..."):
-                    # Simulate API connection delay
-                    time.sleep(2)
-                    st.session_state.clio_connected = True
-                    st.rerun()
-            else:
-                st.error("Please enter both Clio API Key and Client ID")
-    else:
-        # Display connected state
-        st.success("✅ Connected to Clio")
-        
-        # Show mock data stats from Clio
-        st.subheader("Clio Data Summary")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Active Matters", "74")
-        with col2:
-            st.metric("Active Clients", "142")
-        with col3:
-            st.metric("Last Sync", "Today, 09:15 AM")
-        
-        # Show sync options
-        st.subheader("Data Synchronization")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Sync Data Now"):
-                with st.spinner("Syncing data from Clio..."):
-                    time.sleep(3)
-                    st.success("Data synchronized successfully!")
-        with col2:
-            if st.button("Disconnect"):
-                st.session_state.clio_connected = False
-                st.rerun()
-        
-        # Show sample data tables
-        with st.expander("Recent Matters", expanded=True):
-            # Create some sample matter data
-            matter_data = {
-                "Matter ID": ["M-001", "M-002", "M-003", "M-004", "M-005"],
-                "Client Name": ["Johnson LLC", "Smith Industries", "Rodriguez Family", "Patel Enterprises", "Washington Trust"],
-                "Matter Type": ["Corporate", "Litigation", "Estate Planning", "Real Estate", "Tax"],
-                "Open Date": ["2024-01-15", "2024-02-03", "2024-02-17", "2024-02-28", "2024-03-10"],
-                "Status": ["Active", "Active", "Active", "Active", "Active"],
-                "Billable Hours": [45.2, 32.5, 12.0, 8.5, 5.0],
-                "Revenue": ["$11,300", "$8,125", "$3,000", "$2,125", "$1,250"]
-            }
-            sample_matters = pd.DataFrame(matter_data)
-            st.dataframe(sample_matters, use_container_width=True)
-        
-        with st.expander("Recent Time Entries"):
-            # Create some sample time entry data
-            time_data = {
-                "Date": ["2024-03-01", "2024-03-02", "2024-03-02", "2024-03-03", "2024-03-03"],
-                "Matter": ["Johnson LLC", "Smith Industries", "Rodriguez Family", "Smith Industries", "Patel Enterprises"],
-                "User": ["Sarah Jones", "Michael Chen", "Sarah Jones", "Emma Davis", "Michael Chen"],
-                "Activity": ["Research", "Client Meeting", "Document Preparation", "Court Appearance", "Document Review"],
-                "Duration": ["3.5 hrs", "1.0 hr", "2.0 hrs", "4.0 hrs", "1.5 hrs"],
-                "Billable": ["Yes", "Yes", "Yes", "Yes", "Yes"],
-                "Amount": ["$875", "$250", "$500", "$1,000", "$375"]
-            }
-            sample_time = pd.DataFrame(time_data)
-            st.dataframe(sample_time, use_container_width=True)
-        
-        # Integration insights
-        st.subheader("Integration Insights")
-        st.info("Velora has analyzed your Clio data and found potential opportunities:")
-        
-        insights = [
-            "📈 Your hourly realization rate has increased by 8% in the last month",
-            "⏱️ 12 time entries from last week are missing client matter codes",
-            "💰 5 matters have unbilled time that is older than 30 days",
-            "🔄 Practice area utilization is 15% higher for Corporate matters compared to last quarter"
-        ]
-        
-        for insight in insights:
-            st.markdown(f"- {insight}")
 
 def main():
     # Initialize password protection
@@ -1982,26 +1905,26 @@ def main():
         # Initialize session state for saved visualizations if not already done
         if 'saved_visualizations' not in st.session_state:
             st.session_state.saved_visualizations = []
-            
-        # Create tabs - UPDATED TAB IMPLEMENTATION
-        tab_names = ["Overview", "AI Insights", "Custom Viz", "My Dashboard", "Clio Connect"]
-        overview_tab, ai_insights_tab, custom_viz_tab, dashboard_tab, clio_tab = st.tabs(tab_names)
-
-        # Now use separate tab containers rather than a conditional approach
-        with overview_tab:
+        
+        # Create tabs for different sections
+        tabs = st.tabs([
+            "Overview", 
+            "AI Insights",
+            "Custom Viz",
+            "My Dashboard"
+        ])
+        
+        with tabs[0]:
             create_overview_section(filtered_df, data_types)
-            
-        with ai_insights_tab:
+        
+        with tabs[1]:
             create_claude_analysis_section(filtered_df, data_types, claude_analyzer)
-            
-        with custom_viz_tab:
+        
+        with tabs[2]:
             create_prompt_based_visualizations(filtered_df, data_types, claude_analyzer)
-            
-        with dashboard_tab:
+        
+        with tabs[3]:
             create_custom_dashboard(filtered_df, st.session_state.saved_visualizations)
-            
-        with clio_tab:
-            create_clio_connection_tab()
         
         # Option to reset/upload a new file
         if st.sidebar.button("Reset / Upload New File"):
@@ -2023,3 +1946,20 @@ def main():
             Velora AI Practice Intelligence Platform | © 2025 Velora, Inc. All rights reserved.
         </div>
         """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    # Set up session state variables if they don't exist
+    if 'data_loaded' not in st.session_state:
+        st.session_state.data_loaded = False
+    
+    if 'df' not in st.session_state:
+        st.session_state.df = None
+    
+    if 'data_types' not in st.session_state:
+        st.session_state.data_types = None
+    
+    if 'saved_visualizations' not in st.session_state:
+        st.session_state.saved_visualizations = []
+    
+    # Run the main app
+    main()
