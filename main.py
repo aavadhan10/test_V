@@ -186,17 +186,16 @@ def set_velora_styling():
 
 # Define standard color scheme
 COLORS = {
-    'primary': '#9C27B0',     # Velora purple
+    'primary': '#1E88E5',     # Blue
     'secondary': '#34c759',   # Green - for positive metrics
     'accent': '#FF9500',      # Orange - for warnings or highlights
     'neutral': '#8E8E93',     # Gray - for secondary information
     'negative': '#FF3B30',    # Red - for negative metrics or alerts
     'background': '#F0F2F5',  # Light gray - for backgrounds
-    'sequence': px.colors.sequential.Purples,  # Updated to purple theme
-    'categorical': ['#9C27B0', '#34c759', '#FF9500', '#5856D6', '#FF2D55', '#007AFF', '#5AC8FA', '#FFCC00'],
-    'diverging': px.colors.diverging.RdBu,
+    'sequence': px.colors.sequential.Viridis,  # Multicolor gradient
+    'categorical': ['#1E88E5', '#D81B60', '#FFC107', '#004D40', '#8E24AA', '#FB8C00', '#43A047', '#5E35B1'],
+    'diverging': px.colors.diverging.Spectral,  # Multicolor diverging scale
 }
-
 class PasswordProtection:
     """Handles password protection for the app"""
     
