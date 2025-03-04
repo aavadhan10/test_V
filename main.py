@@ -27,7 +27,7 @@ DEMO_PASSWORD = "velorademo"
 
 # Set page configuration
 st.set_page_config(
-    page_title="Velora AI | Practice Intelligence",
+    page_title="Velora AI | AI Powered Business Intelligence for your Practice",
     page_icon="✨",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -55,7 +55,7 @@ def display_logo():
             """
             <div style="text-align: center; padding: 10px 0px 20px 0px;">
                 <h1 style="color: #9C27B0; font-size: 2.5rem; margin-bottom: 0;">VELORA.AI</h1>
-                <p style="color: #555; margin-top: 0;">Practice Intelligence Platform</p>
+                <p style="color: #555; margin-top: 0;">AI Powered Practice Intelligence Platform</p>
             </div>
             """,
             unsafe_allow_html=True
@@ -230,7 +230,7 @@ class PasswordProtection:
                 """
                 <div class="login-header" style="text-align: center; margin-bottom: 30px;">
                     <img src="{}" width="180px" style="margin-bottom: 15px;">
-                    <p style="margin-top:10px; color: #555;">Practice Intelligence Platform</p>
+                    <p style="margin-top:10px; color: #555;">AI Powered Law Practice Intelligence Platform</p>
                 </div>
                 """.format(github_logo_path),
                 unsafe_allow_html=True
@@ -240,7 +240,7 @@ class PasswordProtection:
             st.markdown("""
             <div class="login-header">
                 <h1 style="margin-bottom:5px; color: #9C27B0;">Velora AI</h1>
-                <p style="margin-top:0;">Practice Intelligence Platform</p>
+                <p style="margin-top:0;">AI Powered Law Practice Intelligence Platform</p>
             </div>
             """, unsafe_allow_html=True)
         
