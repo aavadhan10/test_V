@@ -1983,32 +1983,25 @@ def main():
         if 'saved_visualizations' not in st.session_state:
             st.session_state.saved_visualizations = []
             
-        # Initialize tab session state if it doesn't exist
-        if 'current_tab' not in st.session_state:
-            st.session_state.current_tab = 0
-        
-        # Create tabs with fixed state
+        # Create tabs - UPDATED TAB IMPLEMENTATION
         tab_names = ["Overview", "AI Insights", "Custom Viz", "My Dashboard", "Clio Connect"]
-        tabs = st.tabs(tab_names)
-        
-        # Update the current tab index if a tab is clicked
-        for i, tab in enumerate(tabs):
-            if tab.selected:
-                st.session_state.current_tab = i
-                break
-        
-        # Display tab content based on the current tab index
-        with tabs[st.session_state.current_tab]:
-            if st.session_state.current_tab == 0:
-                create_overview_section(filtered_df, data_types)
-            elif st.session_state.current_tab == 1:
-                create_claude_analysis_section(filtered_df, data_types, claude_analyzer)
-            elif st.session_state.current_tab == 2:
-                create_prompt_based_visualizations(filtered_df, data_types, claude_analyzer)
-            elif st.session_state.current_tab == 3:
-                create_custom_dashboard(filtered_df, st.session_state.saved_visualizations)
-            elif st.session_state.current_tab == 4:
-                create_clio_connection_tab()
+        overview_tab, ai_insights_tab, custom_viz_tab, dashboard_tab, clio_tab = st.tabs(tab_names)
+
+        # Now use separate tab containers rather than a conditional approach
+        with overview_tab:
+            create_overview_section(filtered_df, data_types)
+            
+        with ai_insights_tab:
+            create_claude_analysis_section(filtered_df, data_types, claude_analyzer)
+            
+        with custom_viz_tab:
+            create_prompt_based_visualizations(filtered_df, data_types, claude_analyzer)
+            
+        with dashboard_tab:
+            create_custom_dashboard(filtered_df, st.session_state.saved_visualizations)
+            
+        with clio_tab:
+            create_clio_connection_tab()
         
         # Option to reset/upload a new file
         if st.sidebar.button("Reset / Upload New File"):
@@ -2030,20 +2023,3 @@ def main():
             Velora AI Practice Intelligence Platform | © 2025 Velora, Inc. All rights reserved.
         </div>
         """, unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    # Set up session state variables if they don't exist
-    if 'data_loaded' not in st.session_state:
-        st.session_state.data_loaded = False
-    
-    if 'df' not in st.session_state:
-        st.session_state.df = None
-    
-    if 'data_types' not in st.session_state:
-        st.session_state.data_types = None
-    
-    if 'saved_visualizations' not in st.session_state:
-        st.session_state.saved_visualizations = []
-    
-    # Run the main app
-    main()
